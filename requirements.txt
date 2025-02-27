@@ -7,3 +7,4 @@ requests
 pathlib
 webdriver-manager
 webdriver-manager
+undetected-chromedriver

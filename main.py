@@ -2,11 +2,9 @@ from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 import asyncio
 import time
-from selenium import webdriver
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -46,16 +44,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Função de autenticação
 def authenticate(username: str, password: str):
-    options = webdriver.ChromeOptions()
+    options = uc.ChromeOptions()
     options.add_argument("--headless")  
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
     options.add_argument("--remote-debugging-port=9222")
-    
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    
+    options.add_argument("--disable-blink-features=AutomationControlled")  # Evita detecção pelo Instagram
+
+    driver = uc.Chrome(options=options)  # Usando undetected_chromedriver
+
     try:
         driver.get("https://www.instagram.com/")
         time.sleep(3)
