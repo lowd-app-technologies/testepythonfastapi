@@ -4,8 +4,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
 import time
 import requests
 from pathlib import Path
@@ -62,8 +62,8 @@ async def get_user_info(credentials: Credentials):
 
         time.sleep(15)
 
-        profile_picture = driver.find_element(By.XPATH, "/html/body/div[1]/div/div/div[2]/div/div/div[1]/div[1]/div[1]/section/main/div/div[3]/div/div/div[2]/div[1]/div[1]/span/div/button/img")
-        user_name = driver.find_element(By.XPATH, "/html/body/div[1]/div/div/div[2]/div/div/div[1]/div[1]/div[1]/section/main/div/div[3]/div/div/div[2]/div[1]/div[1]/div/span[1]")
+        profile_picture = driver.find_element(By.XPATH, "//img[@alt='Alterar foto do perfil']")
+        user_name = driver.find_element(By.XPATH, "//span[contains(@class, 'x1lliihq')]")
 
         profile_picture_src = profile_picture.get_attribute("src")
         
