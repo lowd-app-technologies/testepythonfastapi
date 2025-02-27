@@ -22,8 +22,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Baixa e instala o Google Chrome
-RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
-    dpkg -i google-chrome-stable_current_amd64.deb || apt-get -fy install
+# Adiciona o repositório do Google Chrome e instala o Chrome corretamente
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable
+
 
 # Instala o ChromeDriver
 RUN wget -q https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip && \
@@ -40,7 +44,8 @@ COPY . .
 # Instala as dependências do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN google-chrome --version
+# Verifica se o Chrome foi instalado corretamente
+RUN which google-chrome && google-chrome --version
 
 # Expõe a porta da API
 EXPOSE 8080
