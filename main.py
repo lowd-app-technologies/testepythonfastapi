@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 import asyncio
 import time
+import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -51,7 +52,6 @@ def authenticate(credentials: Credentials):
 
         time.sleep(10)
 
-
         return driver
     
     except Exception as e:
@@ -82,9 +82,7 @@ async def root():
 @app.post("/run_selenium/")
 async def run_selenium(credentials: Credentials):
     try:
-        
         driver = authenticate(credentials)
-
 
         message = "Autenticação bem-sucedida! Iniciando a adição de usuários ao Close Friends..."
         
@@ -99,3 +97,8 @@ async def run_selenium(credentials: Credentials):
 
     except Exception as e:
         return {"error": str(e)}
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))  # Usa a variável de ambiente do Railway ou a 8000 por padrão
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
