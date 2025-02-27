@@ -97,8 +97,3 @@ async def run_selenium(credentials: Credentials):
 
     except Exception as e:
         return {"error": str(e)}
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))  # Usa a variável de ambiente do Railway ou a 8000 por padrão
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
