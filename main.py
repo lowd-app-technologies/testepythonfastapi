@@ -11,7 +11,6 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import auth
 import requests
 
 app = FastAPI()
@@ -29,8 +28,6 @@ class Credentials(BaseModel):
     password: str
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.include_router(auth.router)
-
 
 def authenticate(credentials: Credentials):
     chrome_options = Options()
@@ -65,7 +62,6 @@ def authenticate(credentials: Credentials):
         driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
-
 def add_users_to_close_friends(driver):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     time.sleep(5)
@@ -82,7 +78,6 @@ def add_users_to_close_friends(driver):
 
     return total_adicionados
 
-
 @app.get('/')
 async def root():
     return {"message": "Hello World"}
@@ -92,19 +87,8 @@ async def run_selenium(credentials: Credentials):
     try:
         # Autenticando e pegando informações do usuário
         driver = authenticate(credentials)
-
-        # Chama o endpoint de autenticação para pegar o nome e a imagem de perfil
-        response = requests.post("http://localhost:8000/get_user_info/", json=credentials.dict())
-        user_info = response.json()
-
-        if "error" in user_info:
-            raise HTTPException(status_code=400, detail="Erro ao obter informações do usuário.")
         
-        # Informações do usuário (nome e foto)
-        user_name = user_info.get("user_name")
-        profile_picture = user_info.get("profile_picture")
-
-        message = f"Usuário autenticado: {user_name}. Iniciando a adição de usuários ao Close Friends..."
+        message = f"Usuário autenticado: {credentials.username}. Iniciando a adição de usuários ao Close Friends..."
         
         # Passando para a página de Close Friends e executando o processo
         total_adicionados = add_users_to_close_friends(driver)
@@ -113,9 +97,7 @@ async def run_selenium(credentials: Credentials):
 
         return {
             "message": message,
-            "usuarios_adicionados": total_adicionados,
-            "user_name": user_name,
-            "profile_picture": profile_picture
+            "usuarios_adicionados": total_adicionados
         }
 
     except Exception as e:
