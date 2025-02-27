@@ -6,3 +6,4 @@ pydantic
 requests
 pathlib
 webdriver-manager
+webdriver-manager

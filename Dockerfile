@@ -40,6 +40,8 @@ COPY . .
 # Instala as dependências do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN google-chrome --version
+
 # Expõe a porta da API
 EXPOSE 8080
 
