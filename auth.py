@@ -54,7 +54,7 @@ async def get_user_info(credentials: Credentials):
         
         driver.get(f"https://www.instagram.com/{credentials.username}/")
 
-        time.sleep(10)
+        time.sleep(15)
 
         profile_picture = driver.find_element(By.XPATH, "//img[contains(@src, 'fbcdn.net')]")
         user_name = driver.find_element(By.XPATH, "//span[contains(@class, 'x1lliihq')]")

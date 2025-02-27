@@ -47,7 +47,7 @@ def authenticate(credentials: Credentials):
     
     try:
         driver.get("https://www.instagram.com/")
-        time.sleep(3)
+        time.sleep(6)
 
         username_input = driver.find_element(By.NAME, "username")
         password_input = driver.find_element(By.NAME, "password")
