@@ -4,6 +4,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import requests
@@ -31,13 +32,18 @@ class Credentials(BaseModel):
 
 @router.post("/get_user_info/")  
 async def get_user_info(credentials: Credentials):
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")  # Novo modo headless mais estável
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-extensions")  
+    chrome_options.add_argument("--disable-plugins")  
+    chrome_options.add_argument("--disable-translate")  
+    chrome_options.add_argument('--disable-dev-shm-usage')
     
     service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     
     try:
         driver.get("https://www.instagram.com/")
