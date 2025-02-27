@@ -9,11 +9,10 @@ RUN apt update && apt install -y \
     wget \
     ca-certificates
 
-# Adiciona a chave e o repositório do Google Chrome
-RUN wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
-    apt update && \
-    apt install -y google-chrome-stable
+# Baixa e instala o Google Chrome
+RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    dpkg -i google-chrome-stable_current_amd64.deb && \
+    apt-get install -f -y
 
 # Verifica se o Google Chrome foi instalado corretamente
 RUN google-chrome-stable --version
