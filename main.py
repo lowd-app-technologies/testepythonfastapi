@@ -1,17 +1,13 @@
-from fastapi import FastAPI, WebSocket, HTTPException
+from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 import asyncio
 import time
-import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-import requests
 
 app = FastAPI()
 
@@ -27,49 +23,63 @@ class Credentials(BaseModel):
     username: str
     password: str
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        data = await websocket.receive_json()
+        username = data["username"]
+        password = data["password"]
+        
+        await websocket.send_text("Iniciando autenticação...")
+        driver = authenticate(username, password)
+        await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
+        
+        total_adicionados = await add_users_to_close_friends(driver, websocket)
+        driver.quit()
+        
+        await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
+    except Exception as e:
+        await websocket.send_text(f"Erro: {str(e)}")
+    finally:
+        await websocket.close()
 
-def authenticate(credentials: Credentials):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")  # Novo modo headless mais estável
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-extensions")  
-    chrome_options.add_argument("--disable-plugins")  
-    chrome_options.add_argument("--disable-translate")  
-    chrome_options.add_argument('--disable-dev-shm-usage')
+# Função de autenticação
+def authenticate(username: str, password: str):
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")  
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
     
     service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Chrome(service=service, options=options)
     
     try:
         driver.get("https://www.instagram.com/")
-        time.sleep(6)
+        time.sleep(3)
 
         username_input = driver.find_element(By.NAME, "username")
         password_input = driver.find_element(By.NAME, "password")
 
-        username_input.send_keys(credentials.username)
-        password_input.send_keys(credentials.password)
+        username_input.send_keys(username)
+        password_input.send_keys(password)
         password_input.send_keys(Keys.RETURN)
 
         time.sleep(10)
-
         return driver
-    
     except Exception as e:
         driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
-def add_users_to_close_friends(driver):
+# Função de adicionar usuários ao Close Friends
+async def add_users_to_close_friends(driver, websocket: WebSocket):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     time.sleep(5)
 
     icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
     total_adicionados = 0
 
-    for icon in icons:
+    for index, icon in enumerate(icons):
         if 'circle__outline' in icon.get_attribute('style'):
             add_button = icon.find_element(By.XPATH, "..")
             add_button.click()
@@ -77,28 +87,3 @@ def add_users_to_close_friends(driver):
             time.sleep(30)
 
     return total_adicionados
-
-@app.get('/')
-async def root():
-    return {"message": "Hello World"}
-
-@app.post("/run_selenium/")
-async def run_selenium(credentials: Credentials):
-    try:
-        # Autenticando e pegando informações do usuário
-        driver = authenticate(credentials)
-        
-        message = f"Usuário autenticado: {credentials.username}. Iniciando a adição de usuários ao Close Friends..."
-        
-        # Passando para a página de Close Friends e executando o processo
-        total_adicionados = add_users_to_close_friends(driver)
-
-        driver.quit()
-
-        return {
-            "message": message,
-            "usuarios_adicionados": total_adicionados
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
