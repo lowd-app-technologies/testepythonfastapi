@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+selenium
+routes
+pydantic
+requests
+pathlib
+webdriver-manager
