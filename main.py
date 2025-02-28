@@ -9,6 +9,50 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from fastapi.middleware.cors import CORSMiddleware
 import random
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+import traceback
+
+# Configuração do sistema de logging
+def configurar_logging():
+    # Criar diretório de logs se não existir
+    log_dir = os.path.join(os.getcwd(), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Caminho completo para o arquivo de log
+    log_file = os.path.join(log_dir, 'processamento_seguidores.log')
+    
+    # Configurar logger
+    logger = logging.getLogger('ProcessamentoSeguidores')
+    logger.setLevel(logging.INFO)
+    
+    # Configurar handler de arquivo com rotação
+    file_handler = RotatingFileHandler(
+        log_file, 
+        maxBytes=10*1024*1024,  # 10 MB
+        backupCount=5  # Manter 5 arquivos de backup
+    )
+    
+    # Formato do log
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    
+    # Adicionar handler ao logger
+    logger.addHandler(file_handler)
+    
+    # Também logar no console
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Configurar logger global
+logger = configurar_logging()
 
 app = FastAPI()
 
@@ -120,39 +164,35 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
 def processar_seguidores_otimizado(driver, followers_list, modo='padrao'):
     """
-    Processa seguidores em um cronograma otimizado.
-    
-    Modos:
-    - 'padrao': 100 seguidores a cada 5 minutos
-    - 'rapido': 150 seguidores a cada 5 minutos
-    - 'turno': Processamento em turnos de 4 horas
+    Processa seguidores em um cronograma otimizado com logging detalhado.
     """
-    total_adicionados = 0
-    total_seguidores = len(followers_list)
-    
-    # Configurações de processamento
-    if modo == 'padrao':
-        seguidores_por_lote = 100
-        intervalo_lote = 300  # 5 minutos
-    elif modo == 'rapido':
-        seguidores_por_lote = 150
-        intervalo_lote = 300  # 5 minutos
-    elif modo == 'turno':
-        seguidores_por_lote = 100
-        intervalo_lote = 14400  # 4 horas
-    else:
-        raise ValueError("Modo inválido. Escolha entre 'padrao', 'rapido' ou 'turno'.")
-    
-    print(f"Iniciando processamento no modo {modo}")
-    print(f"Total de seguidores: {total_seguidores}")
-    print(f"Seguidores por lote: {seguidores_por_lote}")
-    print(f"Intervalo entre lotes: {intervalo_lote/60} minutos")
-    
     try:
+        # Log de início do processamento
+        logger.info(f"Iniciando processamento de seguidores - Modo: {modo}")
+        logger.info(f"Total de seguidores: {len(followers_list)}")
+        
+        total_adicionados = 0
+        total_seguidores = len(followers_list)
+        
+        # Configurações de processamento
+        if modo == 'padrao':
+            seguidores_por_lote = 100
+            intervalo_lote = 300  # 5 minutos
+        elif modo == 'rapido':
+            seguidores_por_lote = 150
+            intervalo_lote = 300  # 5 minutos
+        elif modo == 'turno':
+            seguidores_por_lote = 100
+            intervalo_lote = 14400  # 4 horas
+        else:
+            logger.error(f"Modo inválido: {modo}")
+            raise ValueError("Modo inválido. Escolha entre 'padrao', 'rapido' ou 'turno'.")
+        
+        logger.info(f"Configurações: {seguidores_por_lote} seguidores por lote, intervalo de {intervalo_lote/60} minutos")
+        
         for i in range(0, total_seguidores, seguidores_por_lote):
             batch = followers_list[i:i+seguidores_por_lote]
-            print(f"\nProcessando lote {i//seguidores_por_lote + 1}")
-            print(f"Processando {len(batch)} seguidores...")
+            logger.info(f"Processando lote {i//seguidores_por_lote + 1}: {len(batch)} seguidores")
             
             for follower in batch:
                 try:
@@ -160,24 +200,29 @@ def processar_seguidores_otimizado(driver, followers_list, modo='padrao'):
                     add_button.click()
                     total_adicionados += 1
                     
+                    logger.info(f"Seguidor adicionado com sucesso. Total: {total_adicionados}")
+                    
                     # Atraso humano entre ações
-                    time.sleep(random.randint(2, 5))
+                    wait_time = random.randint(2, 5)
+                    logger.debug(f"Aguardando {wait_time} segundos")
+                    time.sleep(wait_time)
+                
                 except Exception as e:
-                    print(f"Erro ao adicionar seguidor: {str(e)}")
-            
-            print(f"Lote concluído. Total adicionados: {total_adicionados}")
+                    logger.error(f"Erro ao adicionar seguidor: {str(e)}")
+                    logger.error(traceback.format_exc())
             
             # Aguardar entre lotes
             if i + seguidores_por_lote < total_seguidores:
-                print(f"Aguardando {intervalo_lote/60} minutos antes do próximo lote...")
+                logger.info(f"Aguardando {intervalo_lote/60} minutos antes do próximo lote")
                 time.sleep(intervalo_lote)
+        
+        # Log de conclusão
+        logger.info(f"Processamento concluído. Total de seguidores adicionados: {total_adicionados}")
+        logger.info(f"Tempo estimado de processamento: {(total_seguidores/seguidores_por_lote * intervalo_lote)/3600:.2f} horas")
+        
+        return total_adicionados
     
     except Exception as e:
-        print(f"Erro no processamento: {str(e)}")
-    
-    finally:
-        print(f"\nProcessamento concluído.")
-        print(f"Total de seguidores adicionados: {total_adicionados}")
-        print(f"Tempo estimado: {(total_seguidores/seguidores_por_lote * intervalo_lote)/3600:.2f} horas")
-    
-    return total_adicionados
+        logger.critical(f"Erro crítico no processamento: {str(e)}")
+        logger.critical(traceback.format_exc())
+        raise
