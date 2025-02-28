@@ -5,8 +5,6 @@ import time
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -84,19 +82,8 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     for index, icon in enumerate(icons):
         if 'circle__outline' in icon.get_attribute('style'):
             add_button = icon.find_element(By.XPATH, "..")
-            
-            # Rolando até o botão para garantir que está visível
-            driver.execute_script("arguments[0].scrollIntoView();", add_button)
-            time.sleep(1)  # Pequeno delay para garantir a rolagem
-            
-            try:
-                # Usando WebDriverWait para garantir que o botão está clicável
-                wait = WebDriverWait(driver, 10)
-                add_button = wait.until(EC.element_to_be_clickable((By.XPATH, "..")))
-                driver.execute_script("arguments[0].click();", add_button)
-                total_adicionados += 1
-                time.sleep(3)
-            except Exception as e:
-                await websocket.send_text(f"Erro ao clicar no botão: {str(e)}")
+            add_button.click()
+            total_adicionados += 1
+            time.sleep(30)
 
     return total_adicionados
