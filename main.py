@@ -8,6 +8,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from fastapi.middleware.cors import CORSMiddleware
+import random
 
 app = FastAPI()
 
@@ -107,4 +108,76 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                 print(f"Erro ao clicar no botão: {str(e)}")
                 raise
 
+    # Implementando processamento em lote
+    followers_list = driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
+    if not followers_list:
+        print("Nenhum seguidor encontrado para adicionar ao Close Friends.")
+        return 0
+
+    total_adicionados = processar_seguidores_otimizado(driver, followers_list, modo='rapido')
+    
+    return total_adicionados
+
+def processar_seguidores_otimizado(driver, followers_list, modo='padrao'):
+    """
+    Processa seguidores em um cronograma otimizado.
+    
+    Modos:
+    - 'padrao': 100 seguidores a cada 5 minutos
+    - 'rapido': 150 seguidores a cada 5 minutos
+    - 'turno': Processamento em turnos de 4 horas
+    """
+    total_adicionados = 0
+    total_seguidores = len(followers_list)
+    
+    # Configurações de processamento
+    if modo == 'padrao':
+        seguidores_por_lote = 100
+        intervalo_lote = 300  # 5 minutos
+    elif modo == 'rapido':
+        seguidores_por_lote = 150
+        intervalo_lote = 300  # 5 minutos
+    elif modo == 'turno':
+        seguidores_por_lote = 100
+        intervalo_lote = 14400  # 4 horas
+    else:
+        raise ValueError("Modo inválido. Escolha entre 'padrao', 'rapido' ou 'turno'.")
+    
+    print(f"Iniciando processamento no modo {modo}")
+    print(f"Total de seguidores: {total_seguidores}")
+    print(f"Seguidores por lote: {seguidores_por_lote}")
+    print(f"Intervalo entre lotes: {intervalo_lote/60} minutos")
+    
+    try:
+        for i in range(0, total_seguidores, seguidores_por_lote):
+            batch = followers_list[i:i+seguidores_por_lote]
+            print(f"\nProcessando lote {i//seguidores_por_lote + 1}")
+            print(f"Processando {len(batch)} seguidores...")
+            
+            for follower in batch:
+                try:
+                    add_button = driver.find_element_by_css_selector('button[aria-label="Adicionar ao Close Friends"]')
+                    add_button.click()
+                    total_adicionados += 1
+                    
+                    # Atraso humano entre ações
+                    time.sleep(random.randint(2, 5))
+                except Exception as e:
+                    print(f"Erro ao adicionar seguidor: {str(e)}")
+            
+            print(f"Lote concluído. Total adicionados: {total_adicionados}")
+            
+            # Aguardar entre lotes
+            if i + seguidores_por_lote < total_seguidores:
+                print(f"Aguardando {intervalo_lote/60} minutos antes do próximo lote...")
+                time.sleep(intervalo_lote)
+    
+    except Exception as e:
+        print(f"Erro no processamento: {str(e)}")
+    
+    finally:
+        print(f"\nProcessamento concluído.")
+        print(f"Total de seguidores adicionados: {total_adicionados}")
+        print(f"Tempo estimado: {(total_seguidores/seguidores_por_lote * intervalo_lote)/3600:.2f} horas")
+    
     return total_adicionados
