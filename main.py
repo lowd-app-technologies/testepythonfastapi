@@ -84,6 +84,6 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
             add_button = icon.find_element(By.XPATH, "..")
             add_button.click()
             total_adicionados += 1
-            time.sleep(30)
+            time.sleep(3)
 
     return total_adicionados
