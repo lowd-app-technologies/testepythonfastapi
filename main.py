@@ -13,6 +13,8 @@ import logging
 import sys
 import traceback
 from selenium.common.exceptions import ElementClickInterceptedException, ElementNotInteractableException
+import os
+from selenium.webdriver.common.action_chains import ActionChains
 
 # Configuração do logging para stdout
 def configurar_logging():
@@ -160,43 +162,98 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     
     return total_adicionados
 
-def adicionar_seguidor_close_friends(driver, follower, max_tentativas=3):
+def diagnosticar_elemento(driver, elemento):
     """
-    Tenta adicionar seguidor ao Close Friends com múltiplas estratégias
+    Diagnóstico detalhado do estado do elemento
     """
+    try:
+        # Capturar informações do elemento
+        logger.info(f" 🔍 Diagnóstico de Elemento:")
+        logger.info(f" 📍 Localização: {elemento.location}")
+        logger.info(f" 📏 Tamanho: {elemento.size}")
+        logger.info(f" 🟢 Visível: {elemento.is_displayed()}")
+        logger.info(f" 🔘 Habilitado: {elemento.is_enabled()}")
+        
+        # Tentar obter atributos
+        logger.info(f" 📝 Classe: {elemento.get_attribute('class')}")
+        logger.info(f" 🏷️ Aria-disabled: {elemento.get_attribute('aria-disabled')}")
+        
+        # Screenshot de diagnóstico
+        screenshot_dir = os.path.join(os.getcwd(), 'diagnostico_screenshots')
+        os.makedirs(screenshot_dir, exist_ok=True)
+        screenshot_path = os.path.join(screenshot_dir, f'elemento_diagnostico_{int(time.time())}.png')
+        driver.save_screenshot(screenshot_path)
+        logger.info(f" 📸 Screenshot salva em: {screenshot_path}")
+    
+    except Exception as e:
+        logger.error(f" ❌ Erro no diagnóstico: {str(e)}")
+
+def adicionar_seguidor_close_friends(driver, follower, max_tentativas=5):
+    """
+    Tenta adicionar seguidor ao Close Friends com estratégias específicas para Instagram
+    """
+    # XPath fornecido pelo usuário
+    instagram_close_friends_xpath = '/html/body/div[1]/div/div/div[2]/div/div/div[1]/div[1]/div[1]/section/main/div/div[3]/div/div[2]/div/div/div[1]/div/div/div/div[2]/div[2]/div/div[2]/div/div[1]/div/div[2]'
+    
     for tentativa in range(max_tentativas):
         try:
-            # Localizar botão com espera explícita
-            add_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]'))
-            )
+            logger.info(f" 🔄 Tentativa {tentativa + 1} de adicionar seguidor")
             
-            # Verificar se o botão está habilitado
-            if not add_button.is_enabled():
-                logger.warning(f" 🚫 Botão desabilitado na tentativa {tentativa + 1}")
+            # Estratégias de localização
+            try:
+                # Tentar localizar pelo XPath exato
+                add_button = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, instagram_close_friends_xpath))
+                )
+            except Exception as xpath_error:
+                logger.warning(f" ❗ Erro no XPath exato: {str(xpath_error)}")
                 
-                # Tentar rolar até o elemento
-                driver.execute_script("arguments[0].scrollIntoView(true);", add_button)
-                time.sleep(2)
-                
-                # Verificar novamente
-                if not add_button.is_enabled():
-                    logger.warning(f" ⏳ Aguardando botão habilitar...")
-                    time.sleep(random.randint(3, 7))
-                    continue
+                # Estratégias alternativas
+                try:
+                    # Tentar XPath parcial
+                    add_button = driver.find_element(By.XPATH, '//div[contains(@class, "Close Friends")]')
+                except:
+                    try:
+                        # Tentar seletor CSS
+                        add_button = driver.find_element(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
+                    except Exception as selector_error:
+                        logger.error(f" 🚫 Falha em localizar o botão: {str(selector_error)}")
+                        raise
             
-            # Clicar no botão
-            add_button.click()
-            logger.info(f" ✅ Seguidor adicionado com sucesso na tentativa {tentativa + 1}")
-            return True
-        
-        except (ElementClickInterceptedException, ElementNotInteractableException) as e:
-            logger.warning(f" 🔄 Erro ao clicar: {str(e)}. Tentativa {tentativa + 1}")
-            time.sleep(random.randint(2, 5))
+            # Diagnóstico do elemento
+            try:
+                logger.info(f" 🔍 Detalhes do Elemento:")
+                logger.info(f" 📍 Localização: {add_button.location}")
+                logger.info(f" 📏 Tamanho: {add_button.size}")
+                logger.info(f" 🟢 Visível: {add_button.is_displayed()}")
+                logger.info(f" 🔘 Habilitado: {add_button.is_enabled()}")
+            except Exception as diag_error:
+                logger.warning(f" ❗ Erro no diagnóstico: {str(diag_error)}")
+            
+            # Estratégias de interação
+            interaction_methods = [
+                lambda: add_button.click(),  # Método padrão
+                lambda: driver.execute_script("arguments[0].click();", add_button),  # JavaScript
+                lambda: ActionChains(driver).move_to_element(add_button).click().perform(),  # Action Chains
+                lambda: add_button.send_keys(Keys.ENTER)  # Enviar tecla Enter
+            ]
+            
+            # Tentar métodos de interação
+            for method in interaction_methods:
+                try:
+                    method()
+                    logger.info(f" ✅ Seguidor adicionado com sucesso na tentativa {tentativa + 1}")
+                    return True
+                except Exception as interaction_error:
+                    logger.warning(f" 🔄 Método de interação falhou: {str(interaction_error)}")
+                    time.sleep(random.randint(2, 5))
+            
+            # Se todos os métodos falharem
+            raise Exception("Nenhum método de interação funcionou")
         
         except Exception as e:
-            logger.error(f" ❌ Erro inesperado: {str(e)}")
-            break
+            logger.warning(f" 🚫 Erro na tentativa {tentativa + 1}: {str(e)}")
+            time.sleep(random.randint(3, 7))
     
     logger.error(f" 💥 Falha ao adicionar seguidor após {max_tentativas} tentativas")
     return False
