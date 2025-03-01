@@ -6,6 +6,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from pydantic import BaseModel
+import logging
 
 app = FastAPI()
 
@@ -23,6 +24,40 @@ class Credentials(BaseModel):
 
 stop_process = False 
 
+logger = logging.getLogger(__name__)
+
+def log_emoji(logger, level, message, emoji='📝'):
+    """
+    Função de logging com emojis personalizados
+    
+    Níveis de log suportados:
+    - info: 🌐 (globo)
+    - warning: ⚠️ (aviso)
+    - error: 💥 (explosão)
+    - critical: 🚨 (sirene)
+    - debug: 🔍 (lupa)
+    
+    Uso:
+    log_emoji(logger, 'info', 'Mensagem de log')
+    """
+    emoji_map = {
+        'info': '🌐',
+        'warning': '⚠️',
+        'error': '💥',
+        'critical': '🚨',
+        'debug': '🔍'
+    }
+    
+    # Usar emoji personalizado ou do mapeamento
+    emoji = emoji_map.get(level.lower(), emoji)
+    
+    # Formatar mensagem com emoji
+    emoji_message = f"{emoji} {message}"
+    
+    # Chamar o método de log correspondente
+    log_method = getattr(logger, level.lower(), logger.info)
+    log_method(emoji_message)
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global stop_process
@@ -35,15 +70,19 @@ async def websocket_endpoint(websocket: WebSocket):
         username = data["username"]
         password = data["password"]
 
+        log_emoji(logger, 'info', 'Iniciando autenticação...')
         await websocket.send_text("Iniciando autenticação...")
         driver = authenticate(username, password)
+        log_emoji(logger, 'info', 'Autenticação bem-sucedida!')
         await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
 
+        log_emoji(logger, 'info', f'Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.')
         await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
     except Exception as e:
+        log_emoji(logger, 'error', f'Erro: {str(e)}')
         await websocket.send_text(f"Erro: {str(e)}")
     finally:
         await websocket.close()
@@ -89,6 +128,10 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     await asyncio.sleep(5)  
 
+    # Log de início de processamento de contatos
+    log_emoji(logger, 'info', 'Iniciando processamento de contatos para Close Friends')
+    await websocket.send_text("🚀 Iniciando adição de contatos ao Close Friends...")
+
     last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
 
@@ -97,6 +140,7 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
         for index, icon in enumerate(icons):
             if stop_process:
+                log_emoji(logger, 'info', 'Processo interrompido pelo usuário.')
                 await websocket.send_text("Processo interrompido pelo usuário.")
                 return total_adicionados  
 
@@ -107,16 +151,20 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                     add_button = icon.find_element(By.XPATH, "..")
                     add_button.click()
                     total_adicionados += 1
+                    log_emoji(logger, 'info', f'{total_adicionados} usuários adicionados ao Close Friends')
                     await websocket.send_text(f"{total_adicionados} usuários adicionados...")
                     await asyncio.sleep(3)  
                 except Exception as e:
-                    await websocket.send_text(f"Erro ao clicar: {str(e)}")
+                    log_emoji(logger, 'error', f'Erro ao adicionar usuário: {str(e)}')
+                    await websocket.send_text(f"Erro ao adicionar usuário: {str(e)}")
 
         driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
         await asyncio.sleep(2)  
 
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
+            log_emoji(logger, 'info', 'Todos os contatos processados')
+            await websocket.send_text("✅ Todos os contatos processados")
             break
         last_height = new_height
 
