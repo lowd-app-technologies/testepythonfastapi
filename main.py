@@ -127,22 +127,53 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
         # Log de início do processo
         logger.info(" 🚀 Iniciando processo de adicionar usuários ao Close Friends")
         
-        # Navegar para a página de Close Friends
+        # Navegar diretamente para a página de Close Friends
         try:
-            close_friends_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '/close_friends')]"))
-            )
-            close_friends_button.click()
-            logger.info(" 🔍 Navegou para página de Close Friends")
-            time.sleep(random.randint(2, 5))
+            driver.get("https://www.instagram.com/accounts/close_friends/")
+            logger.info(" 🌐 Navegou diretamente para URL de Close Friends")
+            
+            # Espera para carregar a página
+            time.sleep(random.randint(5, 10))
+            
+            # Verificar se está na página correta
+            current_url = driver.current_url
+            logger.info(f" 🔍 URL atual: {current_url}")
+            
+            if 'close_friends' not in current_url:
+                logger.warning(" ⚠️ Não está na página de Close Friends")
+                
+                # Tentar navegar via menu
+                try:
+                    menu_button = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '/close_friends')]"))
+                    )
+                    menu_button.click()
+                    logger.info(" 🔘 Navegou via botão de menu")
+                    time.sleep(random.randint(3, 7))
+                except Exception as menu_error:
+                    logger.error(f" ❌ Erro ao navegar via menu: {str(menu_error)}")
+                    raise
+        
         except Exception as nav_error:
-            logger.error(f" ❌ Erro ao navegar para Close Friends: {str(nav_error)}")
+            logger.error(f" 💥 Erro crítico de navegação: {str(nav_error)}")
+            
+            # Capturar screenshot de diagnóstico
+            screenshot_path = os.path.join(os.getcwd(), 'diagnostico_screenshots', f'close_friends_nav_error_{int(time.time())}.png')
+            os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+            driver.save_screenshot(screenshot_path)
+            logger.info(f" 📸 Screenshot de diagnóstico salva em: {screenshot_path}")
+            
             raise
         
         # Localizar lista de seguidores para adicionar
         try:
             followers_list = driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
             logger.info(f" 📊 Total de seguidores encontrados: {len(followers_list)}")
+            
+            if not followers_list:
+                logger.warning(" ⚠️ Nenhum seguidor encontrado para adicionar")
+                return 0
+        
         except Exception as list_error:
             logger.error(f" ❌ Erro ao localizar lista de seguidores: {str(list_error)}")
             raise
@@ -155,6 +186,16 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     
     except Exception as e:
         logger.critical(f" 💥 Erro crítico no processo: {str(e)}")
+        
+        # Capturar screenshot do estado final
+        try:
+            screenshot_path = os.path.join(os.getcwd(), 'diagnostico_screenshots', f'close_friends_process_error_{int(time.time())}.png')
+            os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+            driver.save_screenshot(screenshot_path)
+            logger.info(f" 📸 Screenshot de erro salva em: {screenshot_path}")
+        except Exception as screenshot_error:
+            logger.error(f" ❌ Erro ao capturar screenshot: {str(screenshot_error)}")
+        
         raise
 
 def adicionar_seguidor_close_friends(driver, follower, max_tentativas=5):
