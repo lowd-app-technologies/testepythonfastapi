@@ -132,8 +132,17 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
             driver.get("https://www.instagram.com/accounts/close_friends/")
             logger.info(" 🌐 Navegou diretamente para URL de Close Friends")
             
-            # Espera para carregar a página
-            time.sleep(random.randint(5, 10))
+            # Espera explícita de 8 segundos para carregamento completo
+            try:
+                WebDriverWait(driver, 8).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+                logger.info(" ✅ Página carregada completamente")
+            except:
+                logger.warning(" ⏳ Timeout no carregamento da página, continuando mesmo assim")
+            
+            # Espera adicional para garantir interatividade
+            time.sleep(random.randint(3, 5))
             
             # Verificar se está na página correta
             current_url = driver.current_url
