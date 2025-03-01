@@ -76,14 +76,33 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     time.sleep(5)
 
-    icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
+    last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
 
-    for index, icon in enumerate(icons):
-        if 'circle__outline' in icon.get_attribute('style'):
-            add_button = icon.find_element(By.XPATH, "..")
-            add_button.click()
-            total_adicionados += 1
-            time.sleep(30)
+    while True:
+        icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
+        
+        for index, icon in enumerate(icons):
+            if 'circle__outline' in icon.get_attribute('style'):
+                driver.execute_script("arguments[0].scrollIntoView();", icon)  # Faz scroll até o ícone
+                time.sleep(1)  # Aguarde para evitar erro de carregamento
+                try:
+                    add_button = icon.find_element(By.XPATH, "..")
+                    add_button.click()
+                    total_adicionados += 1
+                    await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                    time.sleep(3)  # Delay entre adições
+                except Exception as e:
+                    await websocket.send_text(f"Erro ao clicar: {str(e)}")
+        
+        # Scroll para baixo
+        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
+        time.sleep(2)  # Aguarde o carregamento da página
+
+        # Verifica se carregou mais elementos
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break  # Sai do loop se não houver mais elementos para carregar
+        last_height = new_height
 
     return total_adicionados
