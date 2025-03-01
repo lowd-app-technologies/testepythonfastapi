@@ -1,48 +1,61 @@
 from fastapi import FastAPI, WebSocket
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import time
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class Credentials(BaseModel):
     username: str
     password: str
 
+stop_process = False 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global stop_process
+    stop_process = False  
+
     await websocket.accept()
+
     try:
         data = await websocket.receive_json()
         username = data["username"]
         password = data["password"]
-        
+
         await websocket.send_text("Iniciando autenticação...")
         driver = authenticate(username, password)
         await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
-        
+
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
-        
+
         await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
     except Exception as e:
         await websocket.send_text(f"Erro: {str(e)}")
     finally:
         await websocket.close()
 
-# Função de autenticação
+@app.post("/stop")
+async def stop_process_api():
+    global stop_process
+    stop_process = True  
+
+    
+    return {"message": "Processo interrompido!"}
+
 def authenticate(username: str, password: str):
     options = uc.ChromeOptions()
     options.add_argument("--headless")  
@@ -50,9 +63,9 @@ def authenticate(username: str, password: str):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
     options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("--disable-blink-features=AutomationControlled")  # Evita detecção pelo Instagram
+    options.add_argument("--disable-blink-features=AutomationControlled") 
 
-    driver = uc.Chrome(options=options)  # Usando undetected_chromedriver
+    driver = uc.Chrome(options=options)  
 
     try:
         driver.get("https://www.instagram.com/")
@@ -71,38 +84,40 @@ def authenticate(username: str, password: str):
         driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
-# Função de adicionar usuários ao Close Friends
 async def add_users_to_close_friends(driver, websocket: WebSocket):
+    global stop_process
     driver.get("https://www.instagram.com/accounts/close_friends/")
-    time.sleep(5)
+    await asyncio.sleep(5)  
 
     last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
 
-    while True:
+    while not stop_process:  
         icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
-        
+
         for index, icon in enumerate(icons):
+            if stop_process:
+                await websocket.send_text("Processo interrompido pelo usuário.")
+                return total_adicionados  
+
             if 'circle__outline' in icon.get_attribute('style'):
-                driver.execute_script("arguments[0].scrollIntoView();", icon)  # Faz scroll até o ícone
-                time.sleep(1)  # Aguarde para evitar erro de carregamento
+                driver.execute_script("arguments[0].scrollIntoView();", icon)
+                await asyncio.sleep(1)  
                 try:
                     add_button = icon.find_element(By.XPATH, "..")
                     add_button.click()
                     total_adicionados += 1
                     await websocket.send_text(f"{total_adicionados} usuários adicionados...")
-                    time.sleep(3)  # Delay entre adições
+                    await asyncio.sleep(3)  
                 except Exception as e:
                     await websocket.send_text(f"Erro ao clicar: {str(e)}")
-        
-        # Scroll para baixo
-        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
-        time.sleep(2)  # Aguarde o carregamento da página
 
-        # Verifica se carregou mais elementos
+        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
+        await asyncio.sleep(2)  
+
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
-            break  # Sai do loop se não houver mais elementos para carregar
+            break
         last_height = new_height
 
     return total_adicionados
