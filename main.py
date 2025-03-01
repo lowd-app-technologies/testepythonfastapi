@@ -120,47 +120,91 @@ def authenticate(username: str, password: str):
 
 # Função de adicionar usuários ao Close Friends
 async def add_users_to_close_friends(driver, websocket: WebSocket):
-    driver.get("https://www.instagram.com/accounts/close_friends/")
-    time.sleep(5)
-
-    icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
-    total_adicionados = 0
-
-    for index, icon in enumerate(icons):
-        if 'circle__outline' in icon.get_attribute('style'):
-            add_button = icon.find_element(By.XPATH, "..")
-            
-            # Verificar o estilo do botão antes de clicar
-            button_style = add_button.get_attribute('style')
-            if 'pointer-events: none;' in button_style:
-                print("O botão está desabilitado.")
-                continue  # Pula esse botão se estiver desabilitado
-            
-            # Rolando até o botão para garantir que está visível
-            driver.execute_script("arguments[0].scrollIntoView();", add_button)
-            time.sleep(1)  # Pequeno delay para garantir a rolagem
-            
-            try:
-                # Aumentando o tempo de espera
-                wait = WebDriverWait(driver, 20)
-                add_button = wait.until(EC.element_to_be_clickable((By.XPATH, "..")))
-                driver.execute_script("arguments[0].click();", add_button)
-                total_adicionados += 1
-                time.sleep(3)
-            except Exception as e:
-                await websocket.send_text(f"Erro ao clicar no botão: {str(e)}")
-                print(f"Erro ao clicar no botão: {str(e)}")
-                raise
-
-    # Implementando processamento em lote
-    followers_list = driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
-    if not followers_list:
-        print("Nenhum seguidor encontrado para adicionar ao Close Friends.")
-        return 0
-
-    total_adicionados = processar_seguidores_otimizado(driver, followers_list, modo='rapido')
+    """
+    Adiciona usuários ao Close Friends com estratégias avançadas
+    """
+    try:
+        # Log de início do processo
+        logger.info(" 🚀 Iniciando processo de adicionar usuários ao Close Friends")
+        
+        # Navegar para a página de Close Friends
+        try:
+            close_friends_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '/close_friends')]"))
+            )
+            close_friends_button.click()
+            logger.info(" 🔍 Navegou para página de Close Friends")
+            time.sleep(random.randint(2, 5))
+        except Exception as nav_error:
+            logger.error(f" ❌ Erro ao navegar para Close Friends: {str(nav_error)}")
+            raise
+        
+        # Localizar lista de seguidores para adicionar
+        try:
+            followers_list = driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
+            logger.info(f" 📊 Total de seguidores encontrados: {len(followers_list)}")
+        except Exception as list_error:
+            logger.error(f" ❌ Erro ao localizar lista de seguidores: {str(list_error)}")
+            raise
+        
+        # Processar seguidores em lotes
+        total_adicionados = processar_seguidores_otimizado(driver, followers_list, modo='rapido')
+        
+        logger.info(f" 🏁 Processo concluído. Total de seguidores adicionados: {total_adicionados}")
+        return total_adicionados
     
-    return total_adicionados
+    except Exception as e:
+        logger.critical(f" 💥 Erro crítico no processo: {str(e)}")
+        raise
+
+def adicionar_seguidor_close_friends(driver, follower, max_tentativas=5):
+    """
+    Tenta adicionar seguidor específico ao Close Friends
+    """
+    for tentativa in range(max_tentativas):
+        try:
+            logger.info(f" 🔄 Tentativa {tentativa + 1} de adicionar seguidor")
+            
+            # Estratégias de localização do botão de adicionar
+            try:
+                # Localizar botão de adicionar Close Friends
+                add_button = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]'))
+                )
+                
+                # Rolar até o elemento se necessário
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", add_button)
+                time.sleep(1)
+                
+                # Tentar métodos de clique
+                interaction_methods = [
+                    lambda: add_button.click(),  # Método padrão
+                    lambda: driver.execute_script("arguments[0].click();", add_button),  # JavaScript
+                    lambda: ActionChains(driver).move_to_element(add_button).click().perform(),  # Action Chains
+                ]
+                
+                # Tentar cada método de interação
+                for method in interaction_methods:
+                    try:
+                        method()
+                        logger.info(f" ✅ Seguidor adicionado com sucesso na tentativa {tentativa + 1}")
+                        return True
+                    except Exception as interaction_error:
+                        logger.warning(f" 🔄 Método de interação falhou: {str(interaction_error)}")
+                        time.sleep(random.randint(2, 5))
+                
+                raise Exception("Nenhum método de clique funcionou")
+            
+            except Exception as locator_error:
+                logger.warning(f" 🚫 Erro ao localizar botão: {str(locator_error)}")
+                time.sleep(random.randint(3, 7))
+        
+        except Exception as e:
+            logger.warning(f" 🚫 Erro na tentativa {tentativa + 1}: {str(e)}")
+            time.sleep(random.randint(3, 7))
+    
+    logger.error(f" 💥 Falha ao adicionar seguidor após {max_tentativas} tentativas")
+    return False
 
 def diagnosticar_elemento(driver, elemento):
     """
@@ -187,76 +231,6 @@ def diagnosticar_elemento(driver, elemento):
     
     except Exception as e:
         logger.error(f" ❌ Erro no diagnóstico: {str(e)}")
-
-def adicionar_seguidor_close_friends(driver, follower, max_tentativas=5):
-    """
-    Tenta adicionar seguidor ao Close Friends com estratégias específicas para Instagram
-    """
-    # XPath fornecido pelo usuário
-    instagram_close_friends_xpath = '/html/body/div[1]/div/div/div[2]/div/div/div[1]/div[1]/div[1]/section/main/div/div[3]/div/div[2]/div/div/div[1]/div/div/div/div[2]/div[2]/div/div[2]/div/div[1]/div/div[2]'
-    
-    for tentativa in range(max_tentativas):
-        try:
-            logger.info(f" 🔄 Tentativa {tentativa + 1} de adicionar seguidor")
-            
-            # Estratégias de localização
-            try:
-                # Tentar localizar pelo XPath exato
-                add_button = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, instagram_close_friends_xpath))
-                )
-            except Exception as xpath_error:
-                logger.warning(f" ❗ Erro no XPath exato: {str(xpath_error)}")
-                
-                # Estratégias alternativas
-                try:
-                    # Tentar XPath parcial
-                    add_button = driver.find_element(By.XPATH, '//div[contains(@class, "Close Friends")]')
-                except:
-                    try:
-                        # Tentar seletor CSS
-                        add_button = driver.find_element(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
-                    except Exception as selector_error:
-                        logger.error(f" 🚫 Falha em localizar o botão: {str(selector_error)}")
-                        raise
-            
-            # Diagnóstico do elemento
-            try:
-                logger.info(f" 🔍 Detalhes do Elemento:")
-                logger.info(f" 📍 Localização: {add_button.location}")
-                logger.info(f" 📏 Tamanho: {add_button.size}")
-                logger.info(f" 🟢 Visível: {add_button.is_displayed()}")
-                logger.info(f" 🔘 Habilitado: {add_button.is_enabled()}")
-            except Exception as diag_error:
-                logger.warning(f" ❗ Erro no diagnóstico: {str(diag_error)}")
-            
-            # Estratégias de interação
-            interaction_methods = [
-                lambda: add_button.click(),  # Método padrão
-                lambda: driver.execute_script("arguments[0].click();", add_button),  # JavaScript
-                lambda: ActionChains(driver).move_to_element(add_button).click().perform(),  # Action Chains
-                lambda: add_button.send_keys(Keys.ENTER)  # Enviar tecla Enter
-            ]
-            
-            # Tentar métodos de interação
-            for method in interaction_methods:
-                try:
-                    method()
-                    logger.info(f" ✅ Seguidor adicionado com sucesso na tentativa {tentativa + 1}")
-                    return True
-                except Exception as interaction_error:
-                    logger.warning(f" 🔄 Método de interação falhou: {str(interaction_error)}")
-                    time.sleep(random.randint(2, 5))
-            
-            # Se todos os métodos falharem
-            raise Exception("Nenhum método de interação funcionou")
-        
-        except Exception as e:
-            logger.warning(f" 🚫 Erro na tentativa {tentativa + 1}: {str(e)}")
-            time.sleep(random.randint(3, 7))
-    
-    logger.error(f" 💥 Falha ao adicionar seguidor após {max_tentativas} tentativas")
-    return False
 
 @log_error
 def processar_seguidores_otimizado(driver, followers_list, modo='padrao'):
