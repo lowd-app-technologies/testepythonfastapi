@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from pydantic import BaseModel
 import logging
+from datetime import datetime
 
 # Importar gerenciador de sessões
 from session_manager import check_saved_session, save_session, update_session_metadata, log_emoji
@@ -112,6 +113,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         log_emoji(logger, 'error', f'Erro: {str(e)}')
         await websocket.send_text(f"Erro: {str(e)}")
+        
+        # Atualizar status em caso de erro
+        process_status["em_progresso"] = False
+        process_status["erro"] = str(e)
+        process_status["ultima_atualizacao"] = datetime.now().isoformat()
+        
         if 'driver' in locals() and driver:
             try:
                 driver.quit()
@@ -124,9 +131,20 @@ async def websocket_endpoint(websocket: WebSocket):
 async def stop_process_api():
     global stop_process
     stop_process = True  
-
-    
     return {"message": "Processo interrompido!"}
+
+# Variável para armazenar status atual do processo
+process_status = {
+    "total_adicionados": 0,
+    "em_progresso": False,
+    "ultima_atualizacao": None,
+    "erro": None
+}
+
+@app.get("/status")
+async def get_status():
+    global process_status
+    return process_status
 
 def authenticate(username: str, password: str):
     options = uc.ChromeOptions()
@@ -157,7 +175,13 @@ def authenticate(username: str, password: str):
         raise Exception(f"Erro de autenticação: {str(e)}")
 
 async def add_users_to_close_friends(driver, websocket: WebSocket):
-    global stop_process
+    global stop_process, process_status
+    
+    # Atualizar status do processo
+    process_status["em_progresso"] = True
+    process_status["total_adicionados"] = 0
+    process_status["ultima_atualizacao"] = datetime.now().isoformat()
+    process_status["erro"] = None
     driver.get("https://www.instagram.com/accounts/close_friends/")
     await asyncio.sleep(5)  
 
@@ -167,38 +191,91 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
     last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
+    same_height_count = 0  # Contador para verificar se a altura está realmente estável
+    max_retries = 3  # Número máximo de tentativas antes de desistir
 
     while not stop_process:  
+        # Buscar os ícones a cada iteração para evitar elementos stale
         icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
-
+        log_emoji(logger, 'info', f'Encontrados {len(icons)} ícones para processar')
+        
+        added_in_this_batch = 0  # Contador para esta rodada
+        
         for index, icon in enumerate(icons):
             if stop_process:
                 log_emoji(logger, 'info', 'Processo interrompido pelo usuário.')
                 await websocket.send_text("Processo interrompido pelo usuário.")
                 return total_adicionados  
 
-            if 'circle__outline' in icon.get_attribute('style'):
-                driver.execute_script("arguments[0].scrollIntoView();", icon)
-                await asyncio.sleep(1)  
-                try:
-                    add_button = icon.find_element(By.XPATH, "..")
-                    add_button.click()
-                    total_adicionados += 1
-                    log_emoji(logger, 'info', f'{total_adicionados} usuários adicionados ao Close Friends')
-                    await websocket.send_text(f"{total_adicionados} usuários adicionados...")
-                    await asyncio.sleep(3)  
-                except Exception as e:
-                    log_emoji(logger, 'error', f'Erro ao adicionar usuário: {str(e)}')
-                    await websocket.send_text(f"Erro ao adicionar usuário: {str(e)}")
+            try:
+                # Verificar se o ícone é um círculo não preenchido (usuário não adicionado)
+                if 'circle__outline' in icon.get_attribute('style'):
+                    # Rolar para o elemento para garantir que está visível
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
+                    await asyncio.sleep(1)  
+                    
+                    try:
+                        # Encontrar e clicar no botão de adição
+                        add_button = icon.find_element(By.XPATH, "..")
+                        add_button.click()
+                        total_adicionados += 1
+                        added_in_this_batch += 1
+                        
+                        # Atualizar status
+                        process_status["total_adicionados"] = total_adicionados
+                        process_status["ultima_atualizacao"] = datetime.now().isoformat()
+                        
+                        log_emoji(logger, 'info', f'{total_adicionados} usuários adicionados ao Close Friends')
+                        await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                        
+                        # Pausa para evitar limites de taxa
+                        await asyncio.sleep(3)  
+                        
+                        # A cada 50 usuários, fazer uma pausa maior para evitar limites
+                        if total_adicionados % 50 == 0:
+                            log_emoji(logger, 'info', f'Pausa após adicionar {total_adicionados} usuários')
+                            await websocket.send_text(f"Pausa para evitar limites... ({total_adicionados} adicionados)")
+                            await asyncio.sleep(10)  # Pausa maior a cada 50 usuários
+                            
+                    except Exception as e:
+                        log_emoji(logger, 'error', f'Erro ao adicionar usuário: {str(e)}')
+                        await websocket.send_text(f"Erro ao adicionar usuário: {str(e)}")
+            except Exception as stale_error:
+                # Tratar erro de elemento stale
+                log_emoji(logger, 'warning', f'Elemento stale, continuando: {str(stale_error)}')
+                continue
 
-        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
-        await asyncio.sleep(2)  
+        # Rolar para carregar mais elementos
+        driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")  # Rolagem mais suave
+        await asyncio.sleep(3)  # Aumentar pausa para carregar novos elementos
+        
+        # Verificar se processamos algum elemento nesta rodada
+        if added_in_this_batch == 0:
+            log_emoji(logger, 'info', 'Nenhum usuário adicionado nesta rodada')
 
+        # Verificar se a altura mudou
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
-            log_emoji(logger, 'info', 'Todos os contatos processados')
-            await websocket.send_text("✅ Todos os contatos processados")
-            break
-        last_height = new_height
+            same_height_count += 1
+            log_emoji(logger, 'info', f'Altura estável: {same_height_count}/{max_retries}')
+            
+            # Se a altura não mudou por várias iterações consecutivas, considerar terminado
+            if same_height_count >= max_retries:
+                log_emoji(logger, 'info', 'Todos os contatos processados (altura estável por múltiplas rodadas)')
+                await websocket.send_text("✅ Todos os contatos processados")
+                break
+                
+            # Tentar uma rolagem diferente antes de desistir
+            if same_height_count == 2:
+                log_emoji(logger, 'info', 'Tentando rolagem alternativa...')
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        else:
+            # Resetar o contador se a altura mudou
+            same_height_count = 0
+            last_height = new_height
 
+    # Atualizar status final
+    process_status["em_progresso"] = False
+    process_status["ultima_atualizacao"] = datetime.now().isoformat()
+    
     return total_adicionados
