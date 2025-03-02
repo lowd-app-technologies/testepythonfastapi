@@ -220,10 +220,78 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_text("🔑 Iniciando autenticação...")
         
         try:
-            driver = authenticate(username, password)
+            # Registrar inicio da autenticação
+            auth_start_time = time.time()
+            log_emoji(logger, 'info', 'Chamando função de autenticação...')
+            # Tentar autenticar com timeout de segurança
+            try:
+                driver = authenticate(username, password)
+                auth_duration = time.time() - auth_start_time
+                log_emoji(logger, 'info', f'Autenticação concluída em {auth_duration:.2f} segundos')
+            except Exception as inner_auth_error:
+                auth_duration = time.time() - auth_start_time
+                log_emoji(logger, 'error', f'Autenticação falhou após {auth_duration:.2f} segundos: {str(inner_auth_error)}')
+                raise  # Propagar o erro para o handler externo
         except Exception as auth_error:
+            # Limpar recursos
+            driver.quit() if driver else None
+            gc.collect()
+            
+            # Obter o traceback para registro
+            error_tb = traceback.format_exc()
             log_emoji(logger, 'error', f'Falha na autenticação: {str(auth_error)}')
-            await websocket.send_text(f"❌ Falha na autenticação: {str(auth_error)}")
+            log_emoji(logger, 'error', f'Traceback completo:\n{error_tb}')
+            
+            # Verificar se é um erro relacionado a 2FA
+            error_msg = str(auth_error).lower()
+            if any(term in error_msg for term in ['two factor', '2fa', 'verificar', 'verificação', 'verification']):
+                await websocket.send_text(f"⚠️ REQUER VERIFICAÇÃO: A conta parece exigir verificação em duas etapas.\n\n" +
+                                         f"Por favor:\n" +
+                                         f"1. Faça login manualmente no Instagram\n" +
+                                         f"2. Complete a verificação de segurança, se solicitada\n" +
+                                         f"3. Tente novamente após confirmar que pode acessar sua conta")
+            # Verificar se parece ser um erro de credenciais
+            elif any(term in error_msg for term in ['incorrect', 'senha inv', 'credencial', 'password', 'username']):
+                await websocket.send_text(f"❌ CREDENCIAIS INVÁLIDAS: Não foi possível fazer login no Instagram.\n\n" +
+                                         f"Verifique:\n" +
+                                         f"- Se o nome de usuário e senha estão corretos\n" +
+                                         f"- Se sua conta não está temporariamente bloqueada\n" +
+                                         f"- Se você não precisa verificar sua conta manualmente")
+            # Verificar se é um erro de RetryError específico
+            elif 'retryerror' in error_msg or '<future at' in error_msg:  # RetryError[<Future at 0x... state=finished raised TimeoutException>]
+                await websocket.send_text(f"⏰ TENTATIVAS ESGOTADAS: O sistema tentou várias vezes, mas não conseguiu completar a operação.\n\n" +
+                                         f"Detalhes:\n" +
+                                         f"- O Instagram não respondeu após múltiplas tentativas\n" +
+                                         f"- Possível detecção de automação ou bloqueio temporário\n\n" +
+                                         f"Recomendações:\n" +
+                                         f"- Aguarde pelo menos 30 minutos antes de tentar novamente\n" +
+                                         f"- Tente fazer login manualmente no seu navegador\n" +
+                                         f"- Verifique se há alguma notificação de segurança do Instagram")
+            # Verificar se é um erro de timeout genérico
+            elif any(term in error_msg for term in ['timeout', 'tempo esgotado', 'retry', 'tentat']):
+                await websocket.send_text(f"⏱️ TEMPO ESGOTADO: O Instagram demorou muito para responder.\n\n" +
+                                         f"Possíveis causas:\n" +
+                                         f"- Conexão lenta com a internet\n" +
+                                         f"- O Instagram está detectando automação\n" +
+                                         f"- O sistema está sobrecarregado\n\n" +
+                                         f"Dica: Tente novamente mais tarde ou verifique sua conta manualmente.")
+            # Verificar se é erro de detecção de bot
+            elif any(term in error_msg for term in ['bot', 'detect', 'challenge', 'suspicious', 'suspeita']):
+                await websocket.send_text(f"⚠️ DETECÇÃO DE AUTOMAÇÃO: O Instagram detectou atividade suspeita.\n\n" +
+                                         f"Possíveis causas:\n" +
+                                         f"- Muitas tentativas de login recentes\n" +
+                                         f"- Acesso a partir de um novo local/IP\n" +
+                                         f"- Conta sob verificação de segurança\n\n" +
+                                         f"Recomendações:\n" +
+                                         f"- Faça login manualmente pelo navegador\n" +
+                                         f"- Complete quaisquer verificações de segurança solicitadas\n" +
+                                         f"- Espere algumas horas antes de tentar novamente")
+            # Erro genérico
+            else:
+                # Formatar a mensagem de erro para melhor legibilidade
+                formatted_error = str(auth_error).replace('\n', '\n  ')
+                await websocket.send_text(f"❌ FALHA NA AUTENTICAÇÃO:\n  {formatted_error}\n\n" +
+                                         f"Verifique os logs e screenshots para mais detalhes.")
             return
         
         # Monitorar memória após autenticação
@@ -374,11 +442,68 @@ def authenticate(username: str, password: str):
             return driver
             
         except Exception as timeout_error:
-            log_emoji(logger, 'error', f'Erro durante o login: {str(timeout_error)}')
-            screenshot_path = capture_error_screenshot(driver, "login_failure", f"Erro: {str(timeout_error)}")
+            # Extrair detalhes da exceção para diagnóstico
+            error_details = str(timeout_error)
+            error_tb = traceback.format_exc()
+            error_class = timeout_error.__class__.__name__
+            
+            # Tentar extrair mais informações da página atual
+            page_info = ""
+            try:
+                if driver.current_url:
+                    page_info += f"URL atual: {driver.current_url}\n"
+                if driver.title:
+                    page_info += f"Título da página: {driver.title}\n"
+                
+                # Verificar se há alguma mensagem de erro visível na página
+                error_elements = driver.find_elements(By.XPATH, "//div[contains(text(), 'error') or contains(text(), 'incorrect')]")
+                if error_elements:
+                    page_info += "Possíveis mensagens de erro na página:\n"
+                    for elem in error_elements[:3]:  # Limitar a 3 para não poluir o log
+                        page_info += f"- {elem.text}\n"
+            except Exception as page_check_error:
+                page_info += f"Não foi possível extrair informações da página: {str(page_check_error)}\n"
+            
+            # Log detalhado do erro para o arquivo de log
+            log_emoji(logger, 'error', f'Erro durante o login: {error_class}: {error_details}')
+            log_emoji(logger, 'error', f'Contexto da página:\n{page_info}')
+            log_emoji(logger, 'error', f'Traceback completo:\n{error_tb}')
+            
+            # Capturar screenshot com todas as informações de contexto
+            error_context = f"Tipo: {error_class}\nDetalhes: {error_details}\n\n{page_info}"
+            screenshot_path = capture_error_screenshot(driver, "login_failure", error_context)
             log_emoji(logger, 'info', f'Screenshot de erro salvo como {screenshot_path}')
+            
+            # Limpar recursos
             driver.quit()
-            raise Exception(f"Falha no login: {str(timeout_error)}")
+            
+            # Criar mensagem de erro amigável com dicas de solução
+            error_message = f"Falha no login: {error_class}\n"
+            
+            # Adicionar dicas específicas com base no tipo de erro
+            if "TimeoutException" in error_class:
+                error_message += "\nPossíveis causas:\n"
+                error_message += "- O Instagram está demorando muito para responder\n"
+                error_message += "- O Instagram pode estar detectando automação\n"
+                error_message += "- Credenciais incorretas\n\n"
+                error_message += "Dicas:\n"
+                error_message += "- Verifique usuário e senha\n"
+                error_message += "- Tente novamente mais tarde\n"
+                error_message += "- Verifique se sua conta não está bloqueada\n"
+            elif "NoSuchElementException" in error_class:
+                error_message += "\nPossíveis causas:\n"
+                error_message += "- A interface do Instagram mudou\n"
+                error_message += "- O Instagram apresentou página diferente do esperado\n\n"
+                error_message += "Dicas:\n"
+                error_message += "- Verifique se há mensagens de segurança do Instagram\n"
+                error_message += "- Tente fazer login manualmente primeiro\n"
+            
+            # Adicionar caminho do screenshot para referência
+            if screenshot_path:
+                error_message += f"\nUm screenshot foi salvo para diagnóstico: {os.path.basename(screenshot_path)}"
+            
+            # Lançar exceção com mensagem mais informativa
+            raise Exception(error_message)
             
     except Exception as e:
         log_emoji(logger, 'error', f'Erro de autenticação: {str(e)}')
