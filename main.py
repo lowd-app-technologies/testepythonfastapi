@@ -13,6 +13,8 @@ import logging
 import traceback
 import gc
 import psutil
+import sys
+import os
 
 # Importar Tenacity para retentativas automáticas
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -529,3 +531,68 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
         log_emoji(logger, 'error', f'Detalhes do erro:\n{error_traceback}')
         
         return total_adicionados
+
+
+# Endpoint para verificar status do sistema
+@app.get("/status")
+async def get_system_status():
+    """Endpoint para verificar o estado do sistema e uso de memória"""
+    try:
+        # Importar módulos necessários
+        import sys
+        import os
+        
+        # Coletar informações do sistema
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        memory_usage = mem_info.rss / (1024 * 1024)  # MB
+        cpu_usage = process.cpu_percent(interval=0.5)
+        system_info = {
+            "status": "running",
+            "memory_mb": round(memory_usage, 2),
+            "cpu_percent": cpu_usage,
+            "threads": len(process.threads()),
+            "uptime_seconds": int(time.time() - process.create_time()),
+            "process_status": process.status(),
+            "python_version": sys.version,
+            "global_status": "running" if not stop_process else "stopped"
+        }
+        
+        # Forçar coleta de lixo e medir novamente
+        gc.collect()
+        mem_after_gc = process.memory_info().rss / (1024 * 1024)
+        
+        # Adicionar métricas pós-GC
+        system_info["memory_after_gc_mb"] = round(mem_after_gc, 2)
+        system_info["memory_freed_mb"] = round(memory_usage - mem_after_gc, 2)
+        
+        # Coletar métricas do GC
+        gc_counts = gc.get_count()
+        system_info["gc_stats"] = {
+            "collections": {
+                "generation0": gc_counts[0],
+                "generation1": gc_counts[1],
+                "generation2": gc_counts[2]
+            },
+            "objects": len(gc.get_objects())
+        }
+        
+        # Listar screenshots disponíveis para debug
+        screenshots_dir = os.path.join(os.getcwd(), "screenshots")
+        screenshots = []
+        if os.path.exists(screenshots_dir):
+            screenshots = [f for f in os.listdir(screenshots_dir) if f.endswith(".png")]
+            screenshots.sort(key=lambda x: os.path.getmtime(os.path.join(screenshots_dir, x)), reverse=True)
+        system_info["screenshots"] = screenshots[:10]  # Apenas os 10 mais recentes
+        
+        log_emoji(logger, 'info', f'Status do sistema verificado. Memória: {memory_usage:.2f} MB')
+        return system_info
+    except Exception as e:
+        log_emoji(logger, 'error', f'Erro ao obter status do sistema: {str(e)}')
+        return {"status": "error", "error": str(e)}
+        
+
+# Endpoint para verificar a versão
+@app.get("/version")
+def get_version():
+    return {"version": "1.0.1", "updated_at": "2025-03-02"}

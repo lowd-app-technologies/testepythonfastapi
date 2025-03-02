@@ -45,15 +45,14 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
     apt-get install -y google-chrome-stable && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Instala o ChromeDriver correspondente à versão do Chrome instalado
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1) && \
-    CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") && \
-    echo "Instalando ChromeDriver versão $CHROMEDRIVER_VERSION para Chrome $CHROME_VERSION" && \
-    wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip" && \
+# Instala uma versão fixa do ChromeDriver para evitar problemas de compatibilidade
+# Versão 114.0.5735.90 é compatível com Chrome 114+
+RUN wget -q "https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip" && \
     unzip chromedriver_linux64.zip && \
     mv chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
-    rm chromedriver_linux64.zip
+    rm chromedriver_linux64.zip && \
+    echo "ChromeDriver instalado com sucesso"
 
 # Define o diretório de trabalho
 WORKDIR /app
@@ -68,8 +67,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Verifica se o Chrome e o ChromeDriver foram instalados corretamente
-RUN which google-chrome && google-chrome --version && \
-    which chromedriver && chromedriver --version
+RUN echo "Verificando instalação do Chrome..." && \
+    which google-chrome || echo "Chrome não encontrado" && \
+    google-chrome --version 2>/dev/null || echo "Não foi possível obter a versão do Chrome" && \
+    echo "Verificando instalação do ChromeDriver..." && \
+    which chromedriver || echo "ChromeDriver não encontrado" && \
+    chromedriver --version 2>/dev/null || echo "Não foi possível obter a versão do ChromeDriver" && \
+    echo "Verificação de instalação concluída."
+
+# Cria diretórios para logs e screenshots
+RUN mkdir -p /app/logs /app/screenshots
 
 # Cria um usuário não-root para executar a aplicação (segurança)
 RUN adduser --disabled-password --gecos "" appuser && \
@@ -101,19 +108,12 @@ ENV UVICORN_LOG_LEVEL="info" \
 # Arquivo para configurar os logs centralizados
 COPY log_config.json /app/log_config.json
 
-# Cria diretório para logs
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+# Verifica se os diretórios existem e define permissões
+RUN chmod -R 755 /app/logs /app/screenshots
 
-# Cria diretório para screenshots de erro
-RUN mkdir -p /app/screenshots && chown -R appuser:appuser /app/screenshots
+# Adicionar script de entrypoint para lidar com sinais e iniciar o app
+COPY ./entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-# Comando para rodar a API com configurações otimizadas para WebSockets
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", \
-     "--workers", "1", \
-     "--limit-concurrency", "50", \
-     "--backlog", "2048", \
-     "--timeout-keep-alive", "120", \
-     "--log-level", "info", \
-     "--ws", "auto", \
-     "--loop", "auto", \
-     "--http", "auto"]
+# Comando para rodar o script de entrypoint
+CMD ["/app/entrypoint.sh"]
