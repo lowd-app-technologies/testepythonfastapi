@@ -81,9 +81,39 @@ USER appuser
 # Expõe a porta da API
 EXPOSE 8080
 
-# Configura logs do Uvicorn
+# Configura logs do Uvicorn e limites de memória
 ENV UVICORN_LOG_LEVEL="info" \
-    UVICORN_ACCESS_LOG=1
+    UVICORN_ACCESS_LOG=1 \
+    UVICORN_LOG_CONFIG="log_config.json" \
+    PYTHONWARNINGS="ignore::DeprecationWarning" \
+    CHROME_IGNORE_CERTIFICATE_ERRORS=1 \
+    # Configurações para o gerenciamento de memória Python
+    PYTHONMALLOC=malloc \
+    # Limites para a JVM do Chrome 
+    NODE_OPTIONS="--max-old-space-size=2048" \
+    # Número de threads para o GC
+    PYTHONGC="threads" \
+    # Agressividade da coleta de lixo
+    PYTHONGCTHRESHOLD=700 \
+    # Forçar liberação de memória de volta ao sistema
+    MALLOC_TRIM_THRESHOLD_=65536
 
-# Comando para rodar a API com configurações otimizadas
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--limit-concurrency", "100", "--backlog", "2048", "--timeout-keep-alive", "5"]
+# Arquivo para configurar os logs centralizados
+COPY log_config.json /app/log_config.json
+
+# Cria diretório para logs
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+
+# Cria diretório para screenshots de erro
+RUN mkdir -p /app/screenshots && chown -R appuser:appuser /app/screenshots
+
+# Comando para rodar a API com configurações otimizadas para WebSockets
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", \
+     "--limit-concurrency", "50", \
+     "--backlog", "2048", \
+     "--timeout-keep-alive", "120", \
+     "--log-level", "info", \
+     "--ws", "auto", \
+     "--loop", "auto", \
+     "--http", "auto"]
