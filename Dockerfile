@@ -88,6 +88,10 @@ USER appuser
 # Expõe a porta da API
 EXPOSE 8080
 
+# Adiciona healthcheck para monitorar a saúde da aplicação
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8080}/version || exit 1
+
 # Configura logs do Uvicorn e limites de memória
 ENV UVICORN_LOG_LEVEL="info" \
     UVICORN_ACCESS_LOG=1 \
@@ -111,9 +115,11 @@ COPY log_config.json /app/log_config.json
 # Verifica se os diretórios existem e define permissões
 RUN chmod -R 755 /app/logs /app/screenshots
 
-# Adicionar script de entrypoint para lidar com sinais e iniciar o app
-COPY ./entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-# Comando para rodar o script de entrypoint
-CMD ["/app/entrypoint.sh"]
+# Comando para rodar a API diretamente
+# Usando variável PORT do Railway que é injetada no container
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} \
+     --workers 1 \
+     --limit-concurrency 50 \
+     --backlog 2048 \
+     --timeout-keep-alive 120 \
+     --log-level info
