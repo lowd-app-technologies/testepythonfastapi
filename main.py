@@ -5,8 +5,15 @@ import time
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from pydantic import BaseModel
 import logging
+import os
+import pickle
+import json
+from datetime import datetime
+import random
 
 app = FastAPI()
 
@@ -21,8 +28,20 @@ app.add_middleware(
 class Credentials(BaseModel):
     username: str
     password: str
+    use_saved_session: bool = True  # Por padrão, tenta usar sessão salva
 
 stop_process = False 
+
+# Configurar diretório para salvar sessões
+SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sessions')
+os.makedirs(SESSION_DIR, exist_ok=True)
+
+# Configurar o logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 logger = logging.getLogger(__name__)
 
