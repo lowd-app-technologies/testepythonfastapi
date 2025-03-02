@@ -1,10 +1,27 @@
-fastapi
-uvicorn
-selenium
-routes
-pydantic
-requests
-pathlib
-webdriver-manager
-webdriver-manager
-undetected-chromedriver
+# Framework web
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.4.2
+
+# Suporte para WebSocket
+websockets==12.0
+
+# Ferramentas de automação web
+selenium==4.15.2
+undetected-chromedriver==3.5.3
+webdriver-manager==4.0.1
+
+# Utilitários
+requests==2.31.0
+python-dotenv==1.0.0
+pathlib==1.0.1
+
+# Gerenciamento de memória e desempenho
+memory-profiler==0.61.0
+psutil==5.9.6
+
+# Tratamento de erros
+tenacity==8.2.3
+
+# Gerenciamento de rotas
+routes==2.5.1

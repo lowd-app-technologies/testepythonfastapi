@@ -7,52 +7,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from fastapi.middleware.cors import CORSMiddleware
-import random
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
+from pydantic import BaseModel
 import logging
-import sys
 import traceback
-from selenium.common.exceptions import ElementClickInterceptedException, ElementNotInteractableException
-import os
-from selenium.webdriver.common.action_chains import ActionChains
+import gc
+import psutil
 
-# Configuração do logging para stdout
-def configurar_logging():
-    # Configurar logger
-    logger = logging.getLogger('ProcessamentoSeguidores')
-    logger.setLevel(logging.INFO)
-    
-    # Configurar handler para stdout
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    
-    # Formato do log para stdout
-    formatter = logging.Formatter(
-        '[%(asctime)s] %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    stdout_handler.setFormatter(formatter)
-    
-    # Limpar handlers anteriores para evitar duplicação
-    logger.handlers.clear()
-    
-    # Adicionar handler ao logger
-    logger.addHandler(stdout_handler)
-    
-    return logger
-
-# Configurar logger global
-logger = configurar_logging()
-
-# Decorator para logging de erros
-def log_error(func):
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Erro em {func.__name__}: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-    return wrapper
+# Importar Tenacity para retentativas automáticas
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 app = FastAPI()
 
@@ -68,28 +31,129 @@ class Credentials(BaseModel):
     username: str
     password: str
 
+stop_process = False 
+
+logger = logging.getLogger(__name__)
+
+def log_emoji(logger, level, message, emoji='📝'):
+    """
+    Função de logging com emojis personalizados
+    
+    Níveis de log suportados:
+    - info: 🌐 (globo)
+    - warning: ⚠️ (aviso)
+    - error: 💥 (explosão)
+    - critical: 🚨 (sirene)
+    - debug: 🔍 (lupa)
+    
+    Uso:
+    log_emoji(logger, 'info', 'Mensagem de log')
+    """
+    emoji_map = {
+        'info': '🌐',
+        'warning': '⚠️',
+        'error': '💥',
+        'critical': '🚨',
+        'debug': '🔍'
+    }
+    
+    # Usar emoji personalizado ou do mapeamento
+    emoji = emoji_map.get(level.lower(), emoji)
+    
+    # Formatar mensagem com emoji
+    emoji_message = f"{emoji} {message}"
+    
+    # Chamar o método de log correspondente
+    log_method = getattr(logger, level.lower(), logger.info)
+    log_method(emoji_message)
+
+import traceback
+import gc
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global stop_process
+    stop_process = False  
+    driver = None
+
     await websocket.accept()
     try:
-        data = await websocket.receive_json()
-        username = data["username"]
-        password = data["password"]
-        
-        await websocket.send_text("Iniciando autenticação...")
-        driver = authenticate(username, password)
-        await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
-        
-        total_adicionados = await add_users_to_close_friends(driver, websocket)
-        driver.quit()
-        
-        await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
-    except Exception as e:
-        await websocket.send_text(f"Erro: {str(e)}")
-    finally:
-        await websocket.close()
+        try:
+            data = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+            username = data.get("username")
+            password = data.get("password")
+            
+            if not username or not password:
+                raise ValueError("Nome de usuário e senha são obrigatórios")
+            
+        except asyncio.TimeoutError:
+            log_emoji(logger, 'error', 'Timeout ao receber credenciais')
+            await websocket.send_text("Timeout ao receber credenciais. Por favor, tente novamente.")
+            return
+        except Exception as e:
+            log_emoji(logger, 'error', f'Erro ao processar dados de entrada: {str(e)}')
+            await websocket.send_text(f"Erro ao processar dados de entrada: {str(e)}")
+            return
 
-# Função de autenticação
+        log_emoji(logger, 'info', 'Iniciando autenticação...')
+        await websocket.send_text("Iniciando autenticação...")
+        
+        try:
+            driver = authenticate(username, password)
+        except Exception as auth_error:
+            log_emoji(logger, 'error', f'Falha na autenticação: {str(auth_error)}')
+            await websocket.send_text(f"Falha na autenticação: {str(auth_error)}")
+            return
+            
+        log_emoji(logger, 'info', 'Autenticação bem-sucedida!')
+        await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
+
+        try:
+            # Estabelecer um timeout global para o processo
+            total_adicionados = await asyncio.wait_for(
+                add_users_to_close_friends(driver, websocket),
+                timeout=3600  # 1 hora de timeout máximo
+            )
+            log_emoji(logger, 'info', f'Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.')
+            await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
+        except asyncio.TimeoutError:
+            log_emoji(logger, 'error', 'O processo excedeu o tempo limite máximo (1 hora)')
+            await websocket.send_text("O processo excedeu o tempo limite máximo de 1 hora. Por favor, divida o processamento em partes menores.")
+        except Exception as process_error:
+            log_emoji(logger, 'error', f'Erro durante o processamento: {str(process_error)}')
+            await websocket.send_text(f"Erro durante o processamento: {str(process_error)}")
+            # Registrar o traceback para depuração
+            error_traceback = traceback.format_exc()
+            log_emoji(logger, 'error', f'Detalhes do erro:\n{error_traceback}')
+    except Exception as e:
+        log_emoji(logger, 'error', f'Erro global: {str(e)}')
+        await websocket.send_text(f"Erro global: {str(e)}")
+    finally:
+        # Garantir que o driver é fechado corretamente
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+            driver = None
+        
+        # Forçar coleta de lixo para liberar memória
+        gc.collect()
+        
+        # Fechar a conexão websocket
+        try:
+            await websocket.close()
+        except:
+            pass
+
+@app.post("/stop")
+async def stop_process_api():
+    global stop_process
+    stop_process = True  
+
+    
+    return {"message": "Processo interrompido!"}
+
 def authenticate(username: str, password: str):
     options = uc.ChromeOptions()
     options.add_argument("--headless")  
@@ -97,240 +161,194 @@ def authenticate(username: str, password: str):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
     options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("--disable-blink-features=AutomationControlled")  # Evita detecção pelo Instagram
+    options.add_argument("--disable-blink-features=AutomationControlled") 
+    # Adicionar mais memória para o Chrome
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-application-cache")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--memory-pressure-off")
+    options.add_argument("--process-per-site")
+    options.add_argument("--single-process")
 
-    driver = uc.Chrome(options=options)  # Usando undetected_chromedriver
+    # Tentar criar o driver com tentativas em caso de falha
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            driver = uc.Chrome(options=options)
+            break
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise Exception(f"Falha ao iniciar o navegador após {max_retries} tentativas: {str(e)}")
+            time.sleep(2)  # Espera antes de tentar novamente
 
     try:
+        # Definir timeout de página explícito
+        driver.set_page_load_timeout(30)
         driver.get("https://www.instagram.com/")
-        time.sleep(3)
-
-        username_input = driver.find_element(By.NAME, "username")
-        password_input = driver.find_element(By.NAME, "password")
-
-        username_input.send_keys(username)
-        password_input.send_keys(password)
-        password_input.send_keys(Keys.RETURN)
-
-        time.sleep(10)
-        return driver
+        
+        # Esperar explicitamente pelos elementos
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException
+        
+        wait = WebDriverWait(driver, 15)
+        
+        try:
+            username_input = wait.until(EC.presence_of_element_located((By.NAME, "username")))
+            password_input = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+            
+            username_input.clear()
+            username_input.send_keys(username)
+            password_input.clear()
+            password_input.send_keys(password)
+            password_input.send_keys(Keys.RETURN)
+            
+            # Esperar explicitamente pelo login bem-sucedido (verificando se algum elemento pós-login está presente)
+            wait.until(EC.presence_of_element_located((By.XPATH, "//div[@role='dialog' or @role='main']")))
+            
+            return driver
+        except TimeoutException:
+            driver.save_screenshot("login_timeout.png")
+            driver.quit()
+            raise Exception("Timeout ao esperar pelos elementos de login do Instagram")
+            
     except Exception as e:
-        driver.quit()
+        if driver:
+            driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
 # Função de adicionar usuários ao Close Friends
 async def add_users_to_close_friends(driver, websocket: WebSocket):
-    """
-    Adiciona usuários ao Close Friends com estratégias avançadas
-    """
+    global stop_process
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
+    
+    # Configurando WebDriverWait
+    wait = WebDriverWait(driver, 15)
+    
     try:
-        # Log de início do processo
-        logger.info(" 🚀 Iniciando processo de adicionar usuários ao Close Friends")
+        # Definir timeout de página explícito para esta navegação
+        driver.set_page_load_timeout(30)
+        driver.get("https://www.instagram.com/accounts/close_friends/")
         
-        # Navegar diretamente para a página de Close Friends
+        # Esperar a página de Close Friends carregar completamente
         try:
-            driver.get("https://www.instagram.com/accounts/close_friends/")
-            logger.info(" 🌐 Navegou diretamente para URL de Close Friends")
+            wait.until(EC.presence_of_element_located((By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")))
+        except TimeoutException:
+            driver.save_screenshot("close_friends_page_load_error.png")
+            log_emoji(logger, 'error', 'Timeout ao carregar a página de Close Friends')
+            await websocket.send_text("❌ Timeout ao carregar a página de Close Friends")
+            return 0
             
-            # Espera explícita de 8 segundos para carregamento completo
-            try:
-                WebDriverWait(driver, 8).until(
-                    lambda d: d.execute_script("return document.readyState") == "complete"
-                )
-                logger.info(" ✅ Página carregada completamente")
-            except:
-                logger.warning(" ⏳ Timeout no carregamento da página, continuando mesmo assim")
-            
-            # Espera adicional para garantir interatividade
-            time.sleep(random.randint(3, 5))
-            
-            # Verificar se está na página correta
-            current_url = driver.current_url
-            logger.info(f" 🔍 URL atual: {current_url}")
-            
-            if 'close_friends' not in current_url:
-                logger.warning(" ⚠️ Não está na página de Close Friends")
-                
-                # Tentar navegar via menu
+        # Log de início de processamento de contatos
+        log_emoji(logger, 'info', 'Iniciando processamento de contatos para Close Friends')
+        await websocket.send_text("🚀 Iniciando adição de contatos ao Close Friends...")
+
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        total_adicionados = 0
+        scroll_attempts = 0
+        max_scroll_attempts = 5  # Limitar número de tentativas em caso de falha na rolagem
+        batch_size = 0  # Contador para limpar a página periodicamente
+
+        # Implementação de retry para elementos que falham na primeira tentativa
+        def click_with_retry(element, max_retries=3):
+            for retry in range(max_retries):
                 try:
-                    menu_button = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '/close_friends')]"))
-                    )
-                    menu_button.click()
-                    logger.info(" 🔘 Navegou via botão de menu")
-                    time.sleep(random.randint(3, 7))
-                except Exception as menu_error:
-                    logger.error(f" ❌ Erro ao navegar via menu: {str(menu_error)}")
-                    raise
-        
-        except Exception as nav_error:
-            logger.error(f" 💥 Erro crítico de navegação: {str(nav_error)}")
-            
-            # Capturar screenshot de diagnóstico
-            screenshot_path = os.path.join(os.getcwd(), 'diagnostico_screenshots', f'close_friends_nav_error_{int(time.time())}.png')
-            os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
-            driver.save_screenshot(screenshot_path)
-            logger.info(f" 📸 Screenshot de diagnóstico salva em: {screenshot_path}")
-            
-            raise
-        
-        # Localizar lista de seguidores para adicionar
-        try:
-            followers_list = driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]')
-            logger.info(f" 📊 Total de seguidores encontrados: {len(followers_list)}")
-            
-            if not followers_list:
-                logger.warning(" ⚠️ Nenhum seguidor encontrado para adicionar")
-                return 0
-        
-        except Exception as list_error:
-            logger.error(f" ❌ Erro ao localizar lista de seguidores: {str(list_error)}")
-            raise
-        
-        # Processar seguidores em lotes
-        total_adicionados = processar_seguidores_otimizado(driver, followers_list, modo='rapido')
-        
-        logger.info(f" 🏁 Processo concluído. Total de seguidores adicionados: {total_adicionados}")
-        return total_adicionados
-    
-    except Exception as e:
-        logger.critical(f" 💥 Erro crítico no processo: {str(e)}")
-        
-        # Capturar screenshot do estado final
-        try:
-            screenshot_path = os.path.join(os.getcwd(), 'diagnostico_screenshots', f'close_friends_process_error_{int(time.time())}.png')
-            os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
-            driver.save_screenshot(screenshot_path)
-            logger.info(f" 📸 Screenshot de erro salva em: {screenshot_path}")
-        except Exception as screenshot_error:
-            logger.error(f" ❌ Erro ao capturar screenshot: {str(screenshot_error)}")
-        
-        raise
+                    element.click()
+                    return True
+                except (StaleElementReferenceException, NoSuchElementException) as e:
+                    if retry == max_retries - 1:
+                        raise e
+                    await asyncio.sleep(0.5)
+            return False
 
-def adicionar_seguidor_close_friends(driver, follower, max_tentativas=5):
-    """
-    Tenta adicionar seguidor específico ao Close Friends
-    """
-    for tentativa in range(max_tentativas):
-        try:
-            logger.info(f" 🔄 Tentativa {tentativa + 1} de adicionar seguidor")
-            
-            # Estratégias de localização do botão de adicionar
+        while not stop_process:
+            # Tentar recuperar os ícones com espera explícita
             try:
-                # Localizar botão de adicionar Close Friends
-                add_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Adicionar ao Close Friends"]'))
-                )
+                # Usar uma estratégia diferente para encontrar os ícones com base no estilo
+                # Esta abordagem é mais robusta do que procurar todos os ícones e depois filtrar
+                icons = wait.until(EC.presence_of_all_elements_located(
+                    (By.XPATH, "//div[@data-bloks-name='ig.components.Icon' and contains(@style, 'circle__outline')]")))
                 
-                # Rolar até o elemento se necessário
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", add_button)
-                time.sleep(1)
+                if not icons:
+                    scroll_attempts += 1
+                    if scroll_attempts >= max_scroll_attempts:
+                        log_emoji(logger, 'info', 'Não foram encontrados mais contatos após várias tentativas')
+                        await websocket.send_text("✅ Processamento concluído após várias tentativas de rolagem")
+                        break
+                else:
+                    scroll_attempts = 0  # Resetar contador se encontramos ícones
                 
-                # Tentar métodos de clique
-                interaction_methods = [
-                    lambda: add_button.click(),  # Método padrão
-                    lambda: driver.execute_script("arguments[0].click();", add_button),  # JavaScript
-                    lambda: ActionChains(driver).move_to_element(add_button).click().perform(),  # Action Chains
-                ]
-                
-                # Tentar cada método de interação
-                for method in interaction_methods:
+                # Processar em lotes menores para evitar sobrecarga de memória
+                for index, icon in enumerate(icons[:10]):  # Limitar a 10 por vez
+                    if stop_process:
+                        log_emoji(logger, 'info', 'Processo interrompido pelo usuário.')
+                        await websocket.send_text("Processo interrompido pelo usuário.")
+                        return total_adicionados
+                    
                     try:
-                        method()
-                        logger.info(f" ✅ Seguidor adicionado com sucesso na tentativa {tentativa + 1}")
-                        return True
-                    except Exception as interaction_error:
-                        logger.warning(f" 🔄 Método de interação falhou: {str(interaction_error)}")
-                        time.sleep(random.randint(2, 5))
+                        # Garantir que o elemento está visível antes de clicar
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
+                        await asyncio.sleep(0.5)  # Pequena pausa para a rolagem completar
+                        
+                        # Tentar clicar no item com retry
+                        parent_element = icon.find_element(By.XPATH, "..")
+                        if click_with_retry(parent_element):
+                            total_adicionados += 1
+                            batch_size += 1
+                            log_emoji(logger, 'info', f'{total_adicionados} usuários adicionados ao Close Friends')
+                            await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                            
+                            # Pausa dinâmica para evitar detecção como bot
+                            # Varia o tempo entre 2-4 segundos
+                            await asyncio.sleep(2 + (index % 3))  
+                    except Exception as e:
+                        log_emoji(logger, 'error', f'Erro ao adicionar usuário: {str(e)}')
+                        await websocket.send_text(f"Aviso: Erro ao adicionar um usuário, continuando...")
+                        continue
                 
-                raise Exception("Nenhum método de clique funcionou")
+                # Periodicamente recarregar a página para evitar acumular muito DOM/memória
+                if batch_size >= 50:
+                    log_emoji(logger, 'info', 'Recarregando página para limpar recursos')
+                    await websocket.send_text("Recarregando página para otimizar recursos...")
+                    driver.refresh()
+                    await asyncio.sleep(5)
+                    batch_size = 0
+                    continue
             
-            except Exception as locator_error:
-                logger.warning(f" 🚫 Erro ao localizar botão: {str(locator_error)}")
-                time.sleep(random.randint(3, 7))
-        
-        except Exception as e:
-            logger.warning(f" 🚫 Erro na tentativa {tentativa + 1}: {str(e)}")
-            time.sleep(random.randint(3, 7))
-    
-    logger.error(f" 💥 Falha ao adicionar seguidor após {max_tentativas} tentativas")
-    return False
-
-def diagnosticar_elemento(driver, elemento):
-    """
-    Diagnóstico detalhado do estado do elemento
-    """
-    try:
-        # Capturar informações do elemento
-        logger.info(f" 🔍 Diagnóstico de Elemento:")
-        logger.info(f" 📍 Localização: {elemento.location}")
-        logger.info(f" 📏 Tamanho: {elemento.size}")
-        logger.info(f" 🟢 Visível: {elemento.is_displayed()}")
-        logger.info(f" 🔘 Habilitado: {elemento.is_enabled()}")
-        
-        # Tentar obter atributos
-        logger.info(f" 📝 Classe: {elemento.get_attribute('class')}")
-        logger.info(f" 🏷️ Aria-disabled: {elemento.get_attribute('aria-disabled')}")
-        
-        # Screenshot de diagnóstico
-        screenshot_dir = os.path.join(os.getcwd(), 'diagnostico_screenshots')
-        os.makedirs(screenshot_dir, exist_ok=True)
-        screenshot_path = os.path.join(screenshot_dir, f'elemento_diagnostico_{int(time.time())}.png')
-        driver.save_screenshot(screenshot_path)
-        logger.info(f" 📸 Screenshot salva em: {screenshot_path}")
-    
-    except Exception as e:
-        logger.error(f" ❌ Erro no diagnóstico: {str(e)}")
-
-@log_error
-def processar_seguidores_otimizado(driver, followers_list, modo='padrao'):
-    """
-    Processa seguidores em um cronograma otimizado com tratamento de erros
-    """
-    logger.info(f" 🚀 Iniciando processamento de seguidores - Modo: {modo}")
-    logger.info(f" 📊 Total de seguidores: {len(followers_list)}")
-    
-    total_adicionados = 0
-    total_seguidores = len(followers_list)
-    
-    # Configurações de processamento
-    if modo == 'padrao':
-        seguidores_por_lote = 100
-        intervalo_lote = 300  # 5 minutos
-    elif modo == 'rapido':
-        seguidores_por_lote = 150
-        intervalo_lote = 300  # 5 minutos
-    elif modo == 'turno':
-        seguidores_por_lote = 100
-        intervalo_lote = 14400  # 4 horas
-    else:
-        logger.error(f" ❌ Modo inválido: {modo}")
-        raise ValueError("Modo inválido. Escolha entre 'padrao', 'rapido' ou 'turno'.")
-    
-    logger.info(f" ⚙️ Configurações: {seguidores_por_lote} seguidores por lote, intervalo de {intervalo_lote/60} minutos")
-    
-    try:
-        for i in range(0, total_seguidores, seguidores_por_lote):
-            batch = followers_list[i:i+seguidores_por_lote]
-            logger.info(f" 🔄 Processando lote {i//seguidores_por_lote + 1}: {len(batch)} seguidores")
+            except TimeoutException:
+                # Se não encontrar mais ícones, tente rolar mais
+                log_emoji(logger, 'warning', 'Timeout ao buscar ícones, tentando rolar mais')
+                await websocket.send_text("Buscando mais usuários...")
             
-            for follower in batch:
-                sucesso = adicionar_seguidor_close_friends(driver, follower)
-                if sucesso:
-                    total_adicionados += 1
-                    time.sleep(random.randint(2, 5))
+            # Rolar para carregar mais elementos
+            driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")  # Rolagem mais suave
+            await asyncio.sleep(3)  # Espera mais longa para carregar
             
-            # Aguardar entre lotes
-            if i + seguidores_por_lote < total_seguidores:
-                logger.info(f" ⏰ Aguardando {intervalo_lote/60} minutos antes do próximo lote")
-                time.sleep(intervalo_lote)
-        
-        # Log de conclusão
-        logger.info(f" 🏁 Processamento concluído. Total de seguidores adicionados: {total_adicionados}")
-        logger.info(f" ⏱️ Tempo estimado de processamento: {(total_seguidores/seguidores_por_lote * intervalo_lote)/3600:.2f} horas")
+            # Verificar se chegamos ao fim da página
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                scroll_attempts += 1
+                if scroll_attempts >= max_scroll_attempts:
+                    log_emoji(logger, 'info', 'Fim da página atingido, todos os contatos processados')
+                    await websocket.send_text("✅ Todos os contatos processados")
+                    break
+            else:
+                last_height = new_height
+                scroll_attempts = 0  # Resetar contador se a rolagem funcionou
         
         return total_adicionados
-    
+        
     except Exception as e:
-        logger.error(f" 💥 Erro crítico no processamento: {str(e)}")
-        raise
+        log_emoji(logger, 'error', f'Erro durante o processamento de Close Friends: {str(e)}')
+        await websocket.send_text(f"Erro: {str(e)}")
+        # Tira um screenshot para diagnóstico
+        try:
+            driver.save_screenshot("close_friends_error.png")
+        except:
+            pass
+        return total_adicionados
