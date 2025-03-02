@@ -5,15 +5,11 @@ import time
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from pydantic import BaseModel
 import logging
-import os
-import pickle
-import json
-from datetime import datetime
-import random
+
+# Importar gerenciador de sessões
+from session_manager import check_saved_session, save_session, update_session_metadata, log_emoji
 
 app = FastAPI()
 
@@ -31,10 +27,6 @@ class Credentials(BaseModel):
     use_saved_session: bool = True  # Por padrão, tenta usar sessão salva
 
 stop_process = False 
-
-# Configurar diretório para salvar sessões
-SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sessions')
-os.makedirs(SESSION_DIR, exist_ok=True)
 
 # Configurar o logger
 logging.basicConfig(
@@ -88,13 +80,30 @@ async def websocket_endpoint(websocket: WebSocket):
         data = await websocket.receive_json()
         username = data["username"]
         password = data["password"]
+        use_saved_session = data.get("use_saved_session", True)
 
-        log_emoji(logger, 'info', 'Iniciando autenticação...')
-        await websocket.send_text("Iniciando autenticação...")
-        driver = authenticate(username, password)
-        log_emoji(logger, 'info', 'Autenticação bem-sucedida!')
-        await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
-
+        driver = None
+        session_valid = False
+        
+        # Verificar se existe sessão salva e se devemos usá-la
+        if use_saved_session:
+            log_emoji(logger, 'info', f'Verificando sessão salva para {username[:3]}***')
+            session_valid, driver = await check_saved_session(username, websocket)
+        
+        # Se não tivermos uma sessão válida, realizar autenticação normal
+        if not session_valid:
+            log_emoji(logger, 'info', 'Iniciando autenticação...')
+            await websocket.send_text("Iniciando autenticação...")
+            driver = authenticate(username, password)
+            log_emoji(logger, 'info', 'Autenticação bem-sucedida!')
+            await websocket.send_text("Autenticação bem-sucedida!")
+            
+            # Salvar a sessão após login bem-sucedido
+            save_session(driver, username)
+            await websocket.send_text("Sessão salva para uso futuro!")
+        
+        log_emoji(logger, 'info', 'Iniciando adição de usuários ao Close Friends...')   
+        await websocket.send_text("Adicionando usuários ao Close Friends...")
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
 
@@ -103,6 +112,11 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         log_emoji(logger, 'error', f'Erro: {str(e)}')
         await websocket.send_text(f"Erro: {str(e)}")
+        if 'driver' in locals() and driver:
+            try:
+                driver.quit()
+            except:
+                pass
     finally:
         await websocket.close()
 
