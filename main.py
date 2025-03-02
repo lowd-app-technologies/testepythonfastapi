@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 import asyncio
 import time
@@ -15,6 +16,9 @@ import gc
 import psutil
 import sys
 import os
+import json
+import pickle
+from datetime import datetime
 
 # Importar Tenacity para retentativas automáticas
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -53,8 +57,13 @@ app.add_middleware(
 class Credentials(BaseModel):
     username: str
     password: str
+    use_saved_session: bool = True  # Por padrão, tenta usar sessão salva
 
 stop_process = False 
+
+# Diretório para armazenar cookies e dados de sessão
+SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sessions')
+os.makedirs(SESSION_DIR, exist_ok=True)
 
 # Configurar o logger
 logging.basicConfig(
@@ -127,6 +136,169 @@ def check_memory_usage():
     memory_mb = memory_info.rss / 1024 / 1024
     return memory_mb
 
+# Função para verificar se existe uma sessão salva válida
+async def check_saved_session(username: str, websocket: WebSocket):
+    """
+    Verifica se existe uma sessão salva válida e tenta utilizá-la.
+    Retorna (True, driver) se a sessão for válida, (False, None) caso contrário.
+    """
+    session_path = os.path.join(SESSION_DIR, f"{username}_cookies.pkl")
+    metadata_path = os.path.join(SESSION_DIR, f"{username}_metadata.json")
+    
+    # Verificar se os arquivos existem
+    if not (os.path.exists(session_path) and os.path.exists(metadata_path)):
+        log_emoji(logger, 'info', f'Não foi encontrada sessão salva para {username[:3]}***')
+        return False, None
+    
+    # Verificar metadados da sessão
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        # Verificar data da última sessão
+        last_login = datetime.fromisoformat(metadata['last_login'])
+        current_time = datetime.now()
+        session_age = (current_time - last_login).total_seconds() / 3600  # em horas
+        
+        log_emoji(logger, 'info', f'Sessão encontrada, idade: {session_age:.1f} horas')
+        await websocket.send_text(f"Encontrada sessão salva de {session_age:.1f} horas atrás")
+        
+        # Se a sessão for muito antiga (mais de 48 horas), invalidá-la
+        if session_age > 48:
+            log_emoji(logger, 'info', f'Sessão muito antiga ({session_age:.1f} horas), será ignorada')
+            await websocket.send_text("A sessão salva é muito antiga. Iniciando nova autenticação...")
+            return False, None
+        
+        # Tentar usar a sessão salva
+        log_emoji(logger, 'info', 'Tentando carregar sessão salva...')
+        await websocket.send_text("Tentando restaurar sessão...")
+        
+        try:
+            # Inicializar driver
+            log_emoji(logger, 'info', 'Inicializando driver para sessão salva')
+            options = uc.ChromeOptions()
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-features=NetworkService')
+            options.add_argument('--disable-features=VizDisplayCompositor')
+            options.add_argument('--blink-settings=imagesEnabled=true')
+            
+            driver = uc.Chrome(options=options, headless=True)
+            driver.set_page_load_timeout(30)
+            
+            # Abrir Instagram e carregar cookies
+            driver.get("https://www.instagram.com/")
+            await asyncio.sleep(2)
+            
+            # Carregar cookies
+            with open(session_path, 'rb') as f:
+                cookies = pickle.load(f)
+                for cookie in cookies:
+                    try:
+                        driver.add_cookie(cookie)
+                    except Exception:
+                        pass
+            
+            # Recarregar após adicionar cookies
+            driver.refresh()
+            await asyncio.sleep(3)
+            
+            # Verificar se a sessão é válida
+            try:
+                # Verificar se estamos logados
+                wait = WebDriverWait(driver, 10)
+                profile_icon = wait.until(EC.presence_of_element_located(
+                    (By.XPATH, "//span[contains(@class, 'coreSpriteProfilePic')]/.." + 
+                              " | //span[contains(@class, 'xp7jhwk')]/.." +
+                              " | //div[contains(@class, '_aarf')]/.." +
+                              " | //div[contains(@data-bloks-name, 'ig.components.ProfilePicture')]/..")
+                ))
+                
+                log_emoji(logger, 'info', 'Sessão restaurada com sucesso')
+                await websocket.send_text("✅ Sessão restaurada com sucesso!")
+                
+                # Atualizar metadados da sessão
+                update_session_metadata(username)
+                
+                return True, driver
+                
+            except Exception as e:
+                log_emoji(logger, 'warning', f'Falha ao verificar sessão: {str(e)}')
+                await websocket.send_text("Sessão expirada ou inválida. Iniciando nova autenticação...")
+                driver.quit()
+                return False, None
+                
+        except Exception as session_error:
+            log_emoji(logger, 'error', f'Erro ao carregar sessão: {str(session_error)}')
+            await websocket.send_text("Falha ao restaurar sessão. Iniciando nova autenticação...")
+            if 'driver' in locals() and driver:
+                driver.quit()
+            return False, None
+            
+    except Exception as metadata_error:
+        log_emoji(logger, 'error', f'Erro ao ler metadados da sessão: {str(metadata_error)}')
+        return False, None
+
+# Função para salvar cookies e metadados da sessão
+def save_session(driver, username):
+    """
+    Salva os cookies e metadados da sessão para uso futuro.
+    """
+    try:
+        # Criar diretório para sessões se não existir
+        os.makedirs(SESSION_DIR, exist_ok=True)
+        
+        # Salvar cookies
+        cookies_path = os.path.join(SESSION_DIR, f"{username}_cookies.pkl")
+        with open(cookies_path, 'wb') as f:
+            pickle.dump(driver.get_cookies(), f)
+        
+        # Salvar metadados
+        metadata_path = os.path.join(SESSION_DIR, f"{username}_metadata.json")
+        metadata = {
+            'last_login': datetime.now().isoformat(),
+            'browser_version': driver.capabilities.get('browserVersion', 'unknown'),
+            'user_agent': driver.execute_script("return navigator.userAgent;"),
+            'resolution': {
+                'width': driver.execute_script("return window.innerWidth;"),
+                'height': driver.execute_script("return window.innerHeight;")
+            }
+        }
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f)
+            
+        log_emoji(logger, 'info', f'Sessão salva com sucesso para {username[:3]}***')
+        return True
+    except Exception as e:
+        log_emoji(logger, 'error', f'Erro ao salvar sessão: {str(e)}')
+        return False
+
+# Função para atualizar os metadados da sessão
+def update_session_metadata(username):
+    """
+    Atualiza a data de último acesso nos metadados da sessão.
+    """
+    try:
+        metadata_path = os.path.join(SESSION_DIR, f"{username}_metadata.json")
+        
+        # Carregar metadados existentes
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        # Atualizar timestamp
+        metadata['last_login'] = datetime.now().isoformat()
+        
+        # Salvar metadados atualizados
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f)
+            
+        return True
+    except Exception as e:
+        log_emoji(logger, 'error', f'Erro ao atualizar metadados da sessão: {str(e)}')
+        return False
+
 def capture_error_screenshot(driver, error_name, context_info=""):
     """Captura screenshot com informações detalhadas do erro
     
@@ -197,11 +369,13 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await asyncio.wait_for(websocket.receive_json(), timeout=30)
             username = data.get("username")
             password = data.get("password")
+            use_saved_session = data.get("use_saved_session", True)  # Por padrão, tenta usar sessão salva
             
             if not username or not password:
                 raise ValueError("Nome de usuário e senha são obrigatórios")
             
-            log_emoji(logger, 'info', f'Credenciais recebidas para o usuário: {username}')
+            log_emoji(logger, 'info', f'Credenciais recebidas para o usuário: {username[:3]}***')
+            log_emoji(logger, 'info', f'Usar sessão salva: {use_saved_session}')
             
         except asyncio.TimeoutError:
             log_emoji(logger, 'error', 'Timeout ao receber credenciais')
@@ -212,26 +386,37 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_text(f"❌ Erro ao processar dados de entrada: {str(e)}")
             return
 
-        # Monitorar memória antes da autenticação
-        pre_auth_memory = check_memory_usage()
-        log_emoji(logger, 'info', f'Memória antes da autenticação: {pre_auth_memory:.2f} MB')
-        
-        log_emoji(logger, 'info', 'Iniciando autenticação...')
-        await websocket.send_text("🔑 Iniciando autenticação...")
-        
         try:
-            # Registrar inicio da autenticação
-            auth_start_time = time.time()
-            log_emoji(logger, 'info', 'Chamando função de autenticação...')
-            # Tentar autenticar com timeout de segurança
-            try:
+            # Verificar se deve tentar usar sessão salva
+            session_valid = False
+            if use_saved_session:
+                log_emoji(logger, 'info', f'Tentando usar sessão salva para {username[:3]}***')
+                await websocket.send_text("Verificando sessão salva...")
+                session_valid, driver = await check_saved_session(username, websocket)
+            
+            # Se não existe sessão válida, fazer login normal
+            if not session_valid:
+                # Monitorar memória antes da autenticação
+                pre_auth_memory = check_memory_usage()
+                log_emoji(logger, 'info', f'Memória antes da autenticação: {pre_auth_memory:.2f} MB')
+                
+                log_emoji(logger, 'info', 'Iniciando autenticação...')
+                await websocket.send_text("🔑 Iniciando autenticação...")
+                
+                # Registrar inicio da autenticação
+                auth_start_time = time.time()
+                log_emoji(logger, 'info', 'Chamando função de autenticação...')
+                await websocket.send_text("Iniciando processo de autenticação...")
+                
+                # Tentar autenticar
                 driver = authenticate(username, password)
                 auth_duration = time.time() - auth_start_time
                 log_emoji(logger, 'info', f'Autenticação concluída em {auth_duration:.2f} segundos')
-            except Exception as inner_auth_error:
-                auth_duration = time.time() - auth_start_time
-                log_emoji(logger, 'error', f'Autenticação falhou após {auth_duration:.2f} segundos: {str(inner_auth_error)}')
-                raise  # Propagar o erro para o handler externo
+                
+                # Salvar cookies e sessão após autenticação bem-sucedida
+                save_session(driver, username)
+                log_emoji(logger, 'info', f'Sessão salva com sucesso para {username[:3]}***')
+                await websocket.send_text("Sessão salva para uso futuro!")
         except Exception as auth_error:
             # Limpar recursos
             driver.quit() if driver else None
@@ -296,6 +481,7 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # Monitorar memória após autenticação
         post_auth_memory = check_memory_usage()
+        pre_auth_memory = check_memory_usage() if 'pre_auth_memory' not in locals() else pre_auth_memory
         log_emoji(logger, 'info', f'Memória após autenticação: {post_auth_memory:.2f} MB (delta: {post_auth_memory - pre_auth_memory:.2f} MB)')
             
         log_emoji(logger, 'info', 'Autenticação bem-sucedida!')
@@ -689,18 +875,37 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                     try:
                         # Garantir que o elemento está visível antes de clicar
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
+                        log_emoji(logger, 'debug', f'Rolando para o elemento {index+1} da lista para torná-lo visível')
                         await asyncio.sleep(0.5)  # Pequena pausa para a rolagem completar
                         
+                        # Obter informações do usuário se possível
+                        try:
+                            # Tenta encontrar o nome de usuário ou texto relacionado
+                            user_details = safe_find_element(driver, By.XPATH, 
+                                f"(//div[@data-bloks-name='ig.components.Icon' and contains(@style, 'circle__outline')])[{index + 1}]/ancestor::div[contains(@role, 'button')]//*[contains(@class, 'Text')]")
+                            if user_details:
+                                username = user_details.text
+                                log_emoji(logger, 'info', f'Tentando adicionar usuário: {username}')
+                        except Exception as user_info_error:
+                            log_emoji(logger, 'debug', f'Não foi possível obter nome do usuário: {str(user_info_error)}')
+                            username = f"usuário #{total_adicionados+1}"
+                        
                         # Tentar clicar no item usando nossa função com retry
+                        log_emoji(logger, 'debug', f'Localizando elemento pai para o ícone {index+1}')
                         parent_element = safe_find_element(driver, By.XPATH, 
                                             f"(//div[@data-bloks-name='ig.components.Icon' and contains(@style, 'circle__outline')])[{index + 1}]/..",
                                             timeout=5)
                         
-                        if safe_click(parent_element):
+                        log_emoji(logger, 'debug', f'Tentando clicar no elemento para {username}')
+                        click_start_time = time.time()
+                        click_successful = safe_click(parent_element)
+                        click_time = time.time() - click_start_time
+                        
+                        if click_successful:
                             total_adicionados += 1
                             batch_size += 1
-                            log_emoji(logger, 'info', f'{total_adicionados} usuários adicionados ao Close Friends')
-                            await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                            log_emoji(logger, 'info', f'✅ {username} adicionado ao Close Friends (#{total_adicionados}) em {click_time:.2f}s')
+                            await websocket.send_text(f"✅ {username} adicionado! ({total_adicionados} usuários no total)")
                             
                             # Pausa dinâmica para evitar detecção como bot
                             # Varia o tempo entre 2-4 segundos
@@ -712,13 +917,32 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                 
                 # Periodicamente recarregar a página para evitar acumular muito DOM/memória
                 if batch_size >= 50 or current_mem > 500:  # Recarregar se usar mais de 500MB
-                    log_emoji(logger, 'info', f'Recarregando página para limpar recursos. Memória: {current_mem:.2f} MB')
-                    await websocket.send_text("Recarregando página para otimizar recursos...")
+                    log_emoji(logger, 'info', f'🔄 Recarregando página para limpar recursos. Memória: {current_mem:.2f} MB após {batch_size} adições')
+                    
+                    # Coletar estatísticas para o log
+                    batch_stats = {
+                        "batch_size": batch_size,
+                        "memory_usage_mb": current_mem,
+                        "total_added_so_far": total_adicionados,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    log_emoji(logger, 'info', f'Estatísticas do lote: {batch_stats}')
+                    
+                    await websocket.send_text(f"🔄 Otimizando recursos... ({batch_size} usuários processados neste lote, total: {total_adicionados})")
+                    
+                    refresh_start = time.time()
                     driver.refresh()
+                    refresh_time = time.time() - refresh_start
+                    log_emoji(logger, 'debug', f'Tempo de atualização da página: {refresh_time:.2f}s')
+                    
                     await asyncio.sleep(5)
                     batch_size = 0
+                    
                     # Forçar coleta de lixo
+                    mem_before_gc = current_mem
                     gc.collect()
+                    current_mem = check_memory_usage()
+                    log_emoji(logger, 'info', f'Memória após GC: {current_mem:.2f} MB (liberado: {mem_before_gc - current_mem:.2f} MB)')
                     continue
             
             except TimeoutException:
@@ -727,20 +951,30 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                 await websocket.send_text("Buscando mais usuários...")
             
             # Rolar para carregar mais elementos
+            log_emoji(logger, 'debug', f'Rolando para carregar mais elementos. Altura atual: {last_height}')
+            scroll_start = time.time()
             driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")  # Rolagem mais suave
+            log_emoji(logger, 'debug', f'Comando de rolagem executado em {(time.time() - scroll_start):.3f}s')
+            log_emoji(logger, 'info', f'Aguardando carregamento de novos elementos... ({total_adicionados} adicionados até agora)')
             await asyncio.sleep(3)  # Espera mais longa para carregar
             
             # Verificar se chegamos ao fim da página
             new_height = driver.execute_script("return document.body.scrollHeight")
+            log_emoji(logger, 'debug', f'Nova altura da página: {new_height}, altura anterior: {last_height}')
+            
             if new_height == last_height:
                 scroll_attempts += 1
+                log_emoji(logger, 'info', f'⚠️ Não há novos elementos - tentativa {scroll_attempts}/{max_scroll_attempts}')
+                
                 if scroll_attempts >= max_scroll_attempts:
-                    log_emoji(logger, 'info', 'Fim da página atingido, todos os contatos processados')
-                    await websocket.send_text("✅ Todos os contatos processados")
+                    log_emoji(logger, 'info', f'🏁 Fim da página atingido após {scroll_attempts} tentativas. Total de {total_adicionados} usuários adicionados.')
+                    await websocket.send_text(f"✅ Todos os contatos processados! Total: {total_adicionados} usuários adicionados ao Close Friends.")
                     break
             else:
+                height_diff = new_height - last_height
                 last_height = new_height
                 scroll_attempts = 0  # Resetar contador se a rolagem funcionou
+                log_emoji(logger, 'info', f'📜 Novos elementos carregados (altura +{height_diff}px). Continuando processamento...')
         
         # Uso de memória final
         mem_usage_end = check_memory_usage()
