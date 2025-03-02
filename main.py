@@ -365,23 +365,38 @@ def authenticate(username: str, password: str):
     log_emoji(logger, 'info', 'Configurando opções do Chrome para autenticação')
     
     options = uc.ChromeOptions()
+    # Em ambientes de produção considera usar sem headless para evitar detecção
+    # O Instagram frequentemente detecta navegadores headless
     options.add_argument("--headless")  
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
     options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--disable-blink-features=AutomationControlled") 
+    
+    # Adicionar user-agent realista
+    options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
     # Adicionar mais memória para o Chrome
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-application-cache")
     options.add_argument("--disable-notifications")
     options.add_argument("--memory-pressure-off")
-    options.add_argument("--process-per-site")
-    options.add_argument("--single-process")
+    options.add_argument("--window-size=1920,1080")  # Tamanho de tela realista
+    
+    # Remover o argumento single-process que pode causar problemas
+    # options.add_argument("--process-per-site")
+    # options.add_argument("--single-process")
     
     # Parâmetros para evitar detecção de automação
     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
     options.add_argument("--disable-popup-blocking")
+    
+    # Configurações adicionais anti-detecção
+    options.add_argument("--disable-automation")
+    options.add_argument("--disable-blink-features")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     
     # Tentar criar o driver com tentativas em caso de falha
     max_retries = 3
@@ -419,20 +434,90 @@ def authenticate(username: str, password: str):
             username_input = safe_find_element(driver, By.NAME, "username", timeout=20)
             password_input = safe_find_element(driver, By.NAME, "password", timeout=10)
             
-            # Limpar e preencher os campos
-            log_emoji(logger, 'info', 'Preenchendo credenciais')
+            # Simular comportamento humano ao preencher os campos
+            log_emoji(logger, 'info', 'Preenchendo credenciais com comportamento humano')
+            
+            # Limpar campos
             username_input.clear()
-            username_input.send_keys(username)
             password_input.clear()
-            password_input.send_keys(password)
+            
+            # Função para digitar como humano
+            def type_like_human(element, text):
+                for char in text:
+                    element.send_keys(char)
+                    # Pausa aleatória entre digitações
+                    time.sleep(random.uniform(0.05, 0.2))
+                # Pausa aleatória após completar a digitação
+                time.sleep(random.uniform(0.5, 1.5))
+            
+            # Digitar usuário e senha
+            type_like_human(username_input, username)
+            time.sleep(random.uniform(0.5, 1.5))  # Pausa realista entre campos
+            type_like_human(password_input, password)
+            
+            # Pausa antes de enviar o formulário
+            time.sleep(random.uniform(0.5, 2))
             
             # Enviar o formulário
             log_emoji(logger, 'info', 'Enviando formulário de login')
-            password_input.send_keys(Keys.RETURN)
+            # Tentar clicar no botão de login em vez de pressionar enter
+            try:
+                login_button = safe_find_element(driver, By.XPATH, "//button[@type='submit']", timeout=5)
+                login_button.click()
+            except Exception:
+                log_emoji(logger, 'info', 'Botão de login não encontrado, usando pressionar Enter')
+                password_input.send_keys(Keys.RETURN)
             
             # Esperar o login com nossa função com retry
             log_emoji(logger, 'info', 'Aguardando confirmação de login')
-            safe_find_element(driver, By.XPATH, "//div[@role='dialog' or @role='main']", timeout=20)
+            
+            # Adicionar atraso aleatório para simular comportamento humano
+            import random
+            time.sleep(random.uniform(1, 3))
+            
+            # Usar múltiplos seletores para tentar detectar o login bem-sucedido
+            try:
+                # Primeiro tentamos o seletor original
+                safe_find_element(driver, By.XPATH, "//div[@role='dialog' or @role='main']", timeout=15)
+            except Exception as e1:
+                log_emoji(logger, 'warning', f'Primeiro seletor falhou: {str(e1)}')
+                try:
+                    # Verificar se estamos na página principal do Instagram
+                    if 'instagram.com/accounts/onetap' in driver.current_url or 'instagram.com/?next=' in driver.current_url:
+                        log_emoji(logger, 'info', 'Detectada página de redirecionamento pós-login')
+                        pass  # Estamos em uma página pós-login conhecida
+                    else:
+                        # Tentar seletores alternativos
+                        alt_selectors = [
+                            "//a[@href='/direct/inbox/']",  # Link para mensagens diretas
+                            "//span[contains(text(), 'Search')]",  # Busca (em inglês)
+                            "//span[contains(text(), 'Pesquisar')]",  # Busca (em português)
+                            "//div[@aria-label='Home' or @aria-label='Página inicial']",  # Botão Home
+                            "//svg[@aria-label='Home']",  # Ícone Home
+                            "//button[contains(text(), 'Not Now') or contains(text(), 'Agora não')]",  # Dialogo "Not Now"
+                            "//div[contains(@class, 'x9f619')]",  # Classe comum nos elementos da interface principal
+                            "//div[contains(@class, 'xvbhtw8') and contains(@class, 'x1lliihq')]",  # Classes de elementos da interface
+                        ]
+                        
+                        for selector in alt_selectors:
+                            try:
+                                element = safe_find_element(driver, By.XPATH, selector, timeout=5)
+                                log_emoji(logger, 'info', f'Login confirmado usando seletor alternativo: {selector}')
+                                break
+                            except Exception:
+                                continue
+                        else:
+                            # Se nenhum seletor funcionar, verificar se há tela de verificação
+                            if 'challenge' in driver.current_url or 'security' in driver.current_url:
+                                raise Exception("Verificação de segurança do Instagram detectada. Login requer verificação manual.")
+                            else:
+                                # Por último, tirar screenshot e tentar prosseguir mesmo assim
+                                capture_error_screenshot(driver, "post_login_detection", "Falha ao detectar elementos pós-login")
+                                log_emoji(logger, 'warning', 'Não foi possível confirmar o login, mas tentando prosseguir')
+                except Exception as e2:
+                    # Se todas as alternativas falharem, relançar a exceção original com mais detalhes
+                    log_emoji(logger, 'error', f'Todas as estratégias de detecção de login falharam: {str(e2)}')
+                    raise Exception(f"Falha na detecção do login: {str(e1)}. Tentativas alternativas: {str(e2)}")
             
             # Verificar uso de memória após login
             mem_after = check_memory_usage()
@@ -474,6 +559,27 @@ def authenticate(username: str, password: str):
             screenshot_path = capture_error_screenshot(driver, "login_failure", error_context)
             log_emoji(logger, 'info', f'Screenshot de erro salvo como {screenshot_path}')
             
+            # Verificar se o erro pode ser causado por detecção de automação ou verificação de segurança
+            try:
+                # Buscar elementos específicos de desafios de segurança
+                security_elements = driver.find_elements(By.XPATH, 
+                    "//div[contains(text(), 'challenge') or contains(text(), 'verify') or "
+                    "contains(text(), 'security') or contains(text(), 'suspicious') or "
+                    "contains(text(), 'unusual') or contains(text(), 'captcha') or "
+                    "contains(text(), 'verificar') or contains(text(), 'segurança')]"
+                )
+                
+                if security_elements:
+                    log_emoji(logger, 'warning', 'Detectada possível verificação de segurança do Instagram')
+                    security_text = "\n".join([e.text for e in security_elements[:3]])
+                    log_emoji(logger, 'info', f'Textos de segurança: {security_text}')
+                    
+                # Verificar se estamos em uma URL específica de desafio
+                if 'challenge' in driver.current_url or 'security' in driver.current_url:
+                    log_emoji(logger, 'warning', f'URL de desafio de segurança detectada: {driver.current_url}')
+            except Exception as sec_check_error:
+                log_emoji(logger, 'debug', f'Erro ao verificar elementos de segurança: {str(sec_check_error)}')
+            
             # Limpar recursos
             driver.quit()
             
@@ -485,11 +591,14 @@ def authenticate(username: str, password: str):
                 error_message += "\nPossíveis causas:\n"
                 error_message += "- O Instagram está demorando muito para responder\n"
                 error_message += "- O Instagram pode estar detectando automação\n"
+                error_message += "- O Instagram está exigindo verificação de segurança\n"
                 error_message += "- Credenciais incorretas\n\n"
                 error_message += "Dicas:\n"
                 error_message += "- Verifique usuário e senha\n"
-                error_message += "- Tente novamente mais tarde\n"
-                error_message += "- Verifique se sua conta não está bloqueada\n"
+                error_message += "- Tente fazer login manualmente primeiro para resolver verificações pendentes\n"
+                error_message += "- Desative autenticação de dois fatores temporariamente\n"
+                error_message += "- Se o erro persistir, considere usar um IP diferente ou aguardar 24 horas\n"
+                error_message += "- Verifique se sua conta não está com restrições\n"
             elif "NoSuchElementException" in error_class:
                 error_message += "\nPossíveis causas:\n"
                 error_message += "- A interface do Instagram mudou\n"
