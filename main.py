@@ -89,20 +89,23 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     await asyncio.sleep(5)  
 
-    last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    scroll_attempts = 0  
 
-    while not stop_process:  
+    while not stop_process:
+        
         icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
+        current_followers = len(icons)  
 
-        for index, icon in enumerate(icons):
+        for icon in icons:
             if stop_process:
                 await websocket.send_text("Processo interrompido pelo usuário.")
-                return total_adicionados  
+                return total_adicionados
 
             if 'circle__outline' in icon.get_attribute('style'):
                 driver.execute_script("arguments[0].scrollIntoView();", icon)
-                await asyncio.sleep(1)  
+                await asyncio.sleep(1)
                 try:
                     add_button = icon.find_element(By.XPATH, "..")
                     add_button.click()
@@ -112,12 +115,26 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                 except Exception as e:
                     await websocket.send_text(f"Erro ao clicar: {str(e)}")
 
+        
         driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
         await asyncio.sleep(2)  
 
         new_height = driver.execute_script("return document.body.scrollHeight")
+        
+        
         if new_height == last_height:
+            scroll_attempts += 1
+            if scroll_attempts >= 2:  
+                driver.refresh()  
+                await asyncio.sleep(5)  
+                scroll_attempts = 0  
+        else:
+            scroll_attempts = 0  
+
+        if scroll_attempts == 0 and len(driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")) == current_followers:
+            await websocket.send_text(f"Todos os usuários foram adicionados com sucesso.")
             break
+
         last_height = new_height
 
     return total_adicionados
