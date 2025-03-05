@@ -1,4 +1,3 @@
-# Usa uma imagem base com Python
 FROM python:3.10-slim
 
 # Atualiza pacotes e instala dependências necessárias para o Chrome
@@ -21,18 +20,16 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Baixa e instala o Google Chrome
-# Adiciona o repositório do Google Chrome e instala o Chrome corretamente
-RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && \
-    apt-get install -y google-chrome-stable
+# Baixa e instala o Google Chrome 
+RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chrome-linux64.zip && \
+    unzip chrome-linux64.zip && \
+    mv chrome-linux64 /opt/google/chrome && \
+    ln -s /opt/google/chrome/chrome /usr/local/bin/google-chrome
 
-
-# Instala o ChromeDriver
-RUN wget -q https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip && \
-    unzip chromedriver_linux64.zip && \
-    mv chromedriver /usr/local/bin/ && \
+# Baixa e instala o ChromeDriver
+RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chromedriver-linux64.zip && \
+    unzip chromedriver-linux64.zip && \
+    mv chromedriver-linux64/chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver
 
 # Define o diretório de trabalho
