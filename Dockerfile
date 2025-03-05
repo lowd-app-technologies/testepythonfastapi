@@ -20,13 +20,16 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Baixa e instala o Google Chrome 
+# Cria o diretório antes de mover o Chrome
+RUN mkdir -p /opt/google/
+
+# Baixa e instala o Google Chrome 134
 RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chrome-linux64.zip && \
     unzip chrome-linux64.zip && \
     mv chrome-linux64 /opt/google/chrome && \
     ln -s /opt/google/chrome/chrome /usr/local/bin/google-chrome
 
-# Baixa e instala o ChromeDriver
+# Baixa e instala o ChromeDriver 134
 RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chromedriver-linux64.zip && \
     unzip chromedriver-linux64.zip && \
     mv chromedriver-linux64/chromedriver /usr/local/bin/ && \
