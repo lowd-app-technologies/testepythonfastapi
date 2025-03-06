@@ -21,13 +21,12 @@ class Credentials(BaseModel):
     username: str
     password: str
 
-stop_process = False 
+stop_process = False
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global stop_process
-    stop_process = False  
-
+    stop_process = False
     await websocket.accept()
 
     try:
@@ -39,21 +38,28 @@ async def websocket_endpoint(websocket: WebSocket):
         driver = authenticate(username, password)
         await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
-        total_adicionados = await add_users_to_close_friends(driver, websocket)
-        driver.quit()
+        async def ping():
+            while True:
+                await asyncio.sleep(10)
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    break
 
-        await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
+        asyncio.create_task(ping())
+        
+        total_adicionados = await add_users_to_close_friends(driver, websocket)
     except Exception as e:
         await websocket.send_text(f"Erro: {str(e)}")
     finally:
+        if 'driver' in locals():
+            driver.quit()
         await websocket.close()
 
 @app.post("/stop")
 async def stop_process_api():
     global stop_process
     stop_process = True  
-
-    
     return {"message": "Processo interrompido!"}
 
 def authenticate(username: str, password: str):
@@ -65,9 +71,8 @@ def authenticate(username: str, password: str):
     options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--disable-blink-features=AutomationControlled") 
 
-    driver = uc.Chrome(options=options)  
-
     try:
+        driver = uc.Chrome(options=options)  
         driver.get("https://www.instagram.com/")
         time.sleep(3)
 
@@ -81,7 +86,8 @@ def authenticate(username: str, password: str):
         time.sleep(10)
         return driver
     except Exception as e:
-        driver.quit()
+        if 'driver' in locals():
+            driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
 async def add_users_to_close_friends(driver, websocket: WebSocket):
@@ -89,20 +95,22 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
     driver.get("https://www.instagram.com/accounts/close_friends/")
     await asyncio.sleep(5)  
 
-    last_height = driver.execute_script("return document.body.scrollHeight")
     total_adicionados = 0
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    scroll_attempts = 0  
 
-    while not stop_process:  
+    while not stop_process:
         icons = driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")
+        current_followers = len(icons)  
 
-        for index, icon in enumerate(icons):
+        for icon in icons:
             if stop_process:
                 await websocket.send_text("Processo interrompido pelo usuário.")
-                return total_adicionados  
+                return total_adicionados
 
             if 'circle__outline' in icon.get_attribute('style'):
                 driver.execute_script("arguments[0].scrollIntoView();", icon)
-                await asyncio.sleep(1)  
+                await asyncio.sleep(1)
                 try:
                     add_button = icon.find_element(By.XPATH, "..")
                     add_button.click()
@@ -116,8 +124,20 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
         await asyncio.sleep(2)  
 
         new_height = driver.execute_script("return document.body.scrollHeight")
+        
         if new_height == last_height:
+            scroll_attempts += 1
+            if scroll_attempts >= 2:  
+                driver.refresh()  
+                await asyncio.sleep(5)  
+                scroll_attempts = 0  
+        else:
+            scroll_attempts = 0  
+
+        if scroll_attempts == 0 and len(driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")) == current_followers:
+            await websocket.send_text("Todos os usuários foram adicionados com sucesso.")
             break
+
         last_height = new_height
 
     return total_adicionados
