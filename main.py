@@ -6,7 +6,6 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from pydantic import BaseModel
-import logging
 
 app = FastAPI()
 
@@ -24,43 +23,6 @@ class Credentials(BaseModel):
 
 stop_process = False 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-logger = logging.getLogger(__name__)
-
-def log_emoji(logger, level, message, emoji='📝'):
-    """
-    Função de logging com emojis personalizados
-    
-    Níveis de log suportados:
-    - info: 🌐 (globo)
-    - warning: ⚠️ (aviso)
-    - error: 💥 (explosão)
-    - critical: 🚨 (sirene)
-    - debug: 🔍 (lupa)
-    
-    Uso:
-    log_emoji(logger, 'info', 'Mensagem de log')
-    """
-    emoji_map = {
-        'info': '🌐',
-        'warning': '⚠️',
-        'error': '💥',
-        'critical': '🚨',
-        'debug': '🔍'
-    }
-    
-    emoji = emoji_map.get(level.lower(), emoji)
-    
-    emoji_message = f"{emoji} {message}"
-    
-    log_method = getattr(logger, level.lower(), logger.info)
-    log_method(emoji_message)
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global stop_process
@@ -73,19 +35,15 @@ async def websocket_endpoint(websocket: WebSocket):
         username = data["username"]
         password = data["password"]
 
-        log_emoji(logger, 'info', 'Iniciando autenticação...')
         await websocket.send_text("Iniciando autenticação...")
         driver = authenticate(username, password)
-        log_emoji(logger, 'info', "Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
         await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
 
-        log_emoji(logger, 'info', f'Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.')
         await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
     except Exception as e:
-        log_emoji(logger, 'error', f'Erro: {str(e)}')
         await websocket.send_text(f"Erro: {str(e)}")
     finally:
         await websocket.close()
@@ -142,7 +100,6 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
         for icon in icons:
             if stop_process:
-                log_emoji(logger, 'info', 'Processo interrompido pelo usuário.')
                 await websocket.send_text("Processo interrompido pelo usuário.")
                 return total_adicionados
 
@@ -156,7 +113,6 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                     await websocket.send_text(f"{total_adicionados} usuários adicionados...")
                     await asyncio.sleep(3)  
                 except Exception as e:
-                    log_emoji(logger, 'error', f"Erro ao clicar: {str(e)}")
                     await websocket.send_text(f"Erro ao clicar: {str(e)}")
 
         
@@ -169,15 +125,13 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
         if new_height == last_height:
             scroll_attempts += 1
             if scroll_attempts >= 2:  
-                driver.refresh()
-                log_emoji(logger, 'info', 'Recarregando a página...')  
+                driver.refresh()  
                 await asyncio.sleep(5)  
                 scroll_attempts = 0  
         else:
             scroll_attempts = 0  
 
         if scroll_attempts == 0 and len(driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")) == current_followers:
-            log_emoji(logger, 'info', 'Todos os usuários foram adicionados com sucesso.')
             await websocket.send_text(f"Todos os usuários foram adicionados com sucesso.")
             break
 
