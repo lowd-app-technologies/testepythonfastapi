@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import time
+from fastapi.websockets import WebSocketState
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -39,7 +40,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
         async def ping():
-            while True:
+            while websocket.client_state == WebSocketState.CONNECTED:
                 await asyncio.sleep(10)
                 try:
                     await websocket.send_text("ping")
@@ -49,8 +50,12 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(ping())
         
         total_adicionados = await add_users_to_close_friends(driver, websocket)
+        
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
     except Exception as e:
-        await websocket.send_text(f"Erro: {str(e)}")
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_text(f"Erro: {str(e)}")
     finally:
         if 'driver' in locals():
             driver.quit()
@@ -105,7 +110,8 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
         for icon in icons:
             if stop_process:
-                await websocket.send_text("Processo interrompido pelo usuário.")
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.send_text("Processo interrompido pelo usuário.")
                 return total_adicionados
 
             if 'circle__outline' in icon.get_attribute('style'):
@@ -115,10 +121,12 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                     add_button = icon.find_element(By.XPATH, "..")
                     add_button.click()
                     total_adicionados += 1
-                    await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_text(f"{total_adicionados} usuários adicionados...")
                     await asyncio.sleep(3)  
                 except Exception as e:
-                    await websocket.send_text(f"Erro ao clicar: {str(e)}")
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_text(f"Erro ao clicar: {str(e)}")
 
         driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
         await asyncio.sleep(2)  
@@ -135,7 +143,8 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
             scroll_attempts = 0  
 
         if scroll_attempts == 0 and len(driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")) == current_followers:
-            await websocket.send_text("Todos os usuários foram adicionados com sucesso.")
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_text("Todos os usuários foram adicionados com sucesso.")
             break
 
         last_height = new_height
