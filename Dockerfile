@@ -1,3 +1,4 @@
+# Usa uma imagem base com Python
 FROM python:3.10-slim
 
 # Atualiza pacotes e instala dependências necessárias para o Chrome
@@ -20,14 +21,11 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Cria o diretório antes de mover o Chrome
-RUN mkdir -p /opt/google/
-
-# Baixa e instala o Google Chrome 134
-RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chrome-linux64.zip && \
-    unzip chrome-linux64.zip && \
-    mv chrome-linux64 /opt/google/chrome && \
-    ln -s /opt/google/chrome/chrome /usr/local/bin/google-chrome
+# Adiciona o repositório do Google Chrome e instala a versão correta
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable
 
 # Baixa e instala o ChromeDriver 134
 RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.35/linux64/chromedriver-linux64.zip && \
