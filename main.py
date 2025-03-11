@@ -36,7 +36,7 @@ async def websocket_endpoint(websocket: WebSocket):
         password = data["password"]
 
         await websocket.send_text("Iniciando autenticação...")
-        driver = authenticate(username, password, websocket)
+        driver = await authenticate(username, password, websocket)
         if not driver:
             return
         
@@ -57,9 +57,38 @@ async def stop_process_api():
     stop_process = True  
     return {"message": "Processo interrompido!"}
 
-def authenticate(username: str, password: str, websocket: WebSocket):
+async def check_two_factor_auth(driver, websocket):
+    try:
+        if "two_factor" in driver.current_url:
+            await websocket.send_text("Digite o código de dois fatores.")
+            
+            code = await websocket.receive_text()  # Aguarda o código do usuário
+            
+            code_input = driver.find_element(By.NAME, "verificationCode")
+            code_input.send_keys(code)
+            code_input.send_keys(Keys.RETURN)
+            time.sleep(5)
+            
+            if "two_factor" not in driver.current_url:
+                await websocket.send_text("Autenticação de dois fatores concluída com sucesso.")
+                return True
+            else:
+                await websocket.send_text("Código incorreto, tente novamente.")
+                return await check_two_factor_auth(driver, websocket)
+    except Exception as e:
+        await websocket.send_text(f"Erro na autenticação de dois fatores: {str(e)}")
+    return False
+
+def check_invalid_password(driver):
+    try:
+        driver.find_element(By.CLASS_NAME, "xkmlbd1")  # Teste com a menor classe possível
+        return True
+    except:
+        return False
+
+async def authenticate(username: str, password: str, websocket: WebSocket):
     options = uc.ChromeOptions()
-    options.add_argument("--headless")  
+    
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
@@ -82,11 +111,11 @@ def authenticate(username: str, password: str, websocket: WebSocket):
         time.sleep(5)
 
         if check_invalid_password(driver):
-            websocket.send_text("Senha incorreta, encerrando o processo.")
+            await websocket.send_text("Senha incorreta, encerrando o processo.")
             driver.quit()
             return None
         
-        if check_two_factor_auth(driver, websocket):
+        if await check_two_factor_auth(driver, websocket):  # Agora aguarda corretamente
             return driver
 
         return driver
@@ -94,33 +123,12 @@ def authenticate(username: str, password: str, websocket: WebSocket):
         driver.quit()
         raise Exception(f"Erro de autenticação: {str(e)}")
 
-def check_invalid_password(driver):
-    try:
-        driver.find_element(By.XPATH, "//div[contains(text(), 'Sua senha está incorreta.')]")
-        return True
-    except:
-        return False
-
-def check_two_factor_auth(driver, websocket):
-    try:
-        if "two_factor" in driver.current_url:
-            websocket.send_text("Autenticação de dois fatores detectada. Insira o código enviado ao seu celular.")
-            while True:
-                code = asyncio.run(websocket.receive_text())
-                code_input = driver.find_element(By.NAME, "verificationCode")
-                code_input.send_keys(code)
-                code_input.send_keys(Keys.RETURN)
-                time.sleep(5)
-                if "two_factor" not in driver.current_url:
-                    websocket.send_text("Autenticação de dois fatores concluída com sucesso.")
-                    return True
-                websocket.send_text("Código incorreto, tente novamente.")
-    except Exception as e:
-        websocket.send_text(f"Erro na autenticação de dois fatores: {str(e)}")
-    return False
 
 async def add_users_to_close_friends(driver, websocket: WebSocket):
     global stop_process
+    body = driver.find_element("tag name", "body")
+    body.send_keys(Keys.ESCAPE)
+    await asyncio.sleep(5)  
     driver.get("https://www.instagram.com/accounts/close_friends/")
     await asyncio.sleep(5)  
 
