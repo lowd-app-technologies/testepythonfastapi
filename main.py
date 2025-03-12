@@ -23,6 +23,16 @@ class Credentials(BaseModel):
 
 stop_process = False 
 
+homePageController = False
+
+def validateHomePageUrlElement(driver):
+    while not homePageController:
+        try:
+            driver.find_element(By.XPATH, "//div[@aria-label='Página inicial']")
+            return True
+        except:
+            return False
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global stop_process
@@ -40,7 +50,8 @@ async def websocket_endpoint(websocket: WebSocket):
         if not driver:
             return
         
-        await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
+        if validateHomePageUrlElement(driver):
+            await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
@@ -88,7 +99,7 @@ def check_invalid_password(driver):
 
 async def authenticate(username: str, password: str, websocket: WebSocket):
     options = uc.ChromeOptions()
-    options.add_argument("--headless")
+    # options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
