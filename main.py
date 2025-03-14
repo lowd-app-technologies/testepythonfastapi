@@ -70,13 +70,14 @@ async def stop_process_api():
     return {"message": "Processo interrompido!"}
 
 async def check_two_factor_auth(driver, websocket):
+    global setTwoFactorMessage
     try:
         if "two_factor" in driver.current_url:
             
             if setTwoFactorMessage == False:
                 await websocket.send_text("Digite o código de dois fatores.")
                 setTwoFactorMessage = True
-                
+
             code = await websocket.receive_text()  # Aguarda o código do usuário
             
             code_input = driver.find_element(By.NAME, "verificationCode")
