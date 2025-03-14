@@ -133,6 +133,8 @@ async def authenticate(username: str, password: str, websocket: WebSocket):
             driver.quit()
             return None
         
+        time.sleep(3)
+
         if await check_two_factor_auth(driver, websocket):  # Agora aguarda corretamente
             return driver
 
