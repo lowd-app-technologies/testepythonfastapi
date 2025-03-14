@@ -25,6 +25,7 @@ stop_process = False
 
 homePageController = False
 
+setTwoFactorMessage = False
 def validateHomePageUrlElement(driver):
     while not homePageController:
         try:
@@ -71,8 +72,11 @@ async def stop_process_api():
 async def check_two_factor_auth(driver, websocket):
     try:
         if "two_factor" in driver.current_url:
-            await websocket.send_text("Digite o código de dois fatores.")
             
+            if setTwoFactorMessage == False:
+                await websocket.send_text("Digite o código de dois fatores.")
+                setTwoFactorMessage = True
+                
             code = await websocket.receive_text()  # Aguarda o código do usuário
             
             code_input = driver.find_element(By.NAME, "verificationCode")
