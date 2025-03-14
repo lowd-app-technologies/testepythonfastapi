@@ -83,14 +83,16 @@ async def check_two_factor_auth(driver, websocket):
             code_input = driver.find_element(By.NAME, "verificationCode")
             code_input.send_keys(code)
             code_input.send_keys(Keys.RETURN)
-            time.sleep(5)
+            time.sleep(7)
             
             if "two_factor" not in driver.current_url:
                 await websocket.send_text("Autenticação de dois fatores concluída com sucesso.")
                 return True
-            else:
+            
+            if driver.find_elements(By.ID, "twoFactorErrorAlert"):
                 await websocket.send_text("Código incorreto, tente novamente.")
                 return await check_two_factor_auth(driver, websocket)
+
     except Exception as e:
         await websocket.send_text(f"Erro na autenticação de dois fatores: {str(e)}")
     return False
@@ -104,7 +106,7 @@ def check_invalid_password(driver):
 
 async def authenticate(username: str, password: str, websocket: WebSocket):
     options = uc.ChromeOptions()
-    options.add_argument("--headless")
+    # options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  
