@@ -6,6 +6,8 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from pydantic import BaseModel
+import requests
+import logging
 
 app = FastAPI()
 
@@ -16,6 +18,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["https://frontend-url.com"],
+    # allow_credentials=True,
+#     allow_methods=["GET", "POST"],
+#     allow_headers=["Authorization"],
+# )
 
 class Credentials(BaseModel):
     username: str
@@ -34,6 +44,22 @@ def validateHomePageUrlElement(driver):
         except:
             return False
 
+API_URL = "https://pythonfastapi-production-437e.up.railway.app/health"
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@app.get("/health")
+async def health_check():
+    try:
+        response = requests.get(API_URL)
+        if response.status_code == 200:
+            logger.info("✅ Servidor ativo!", response.json())
+        else:
+            logger.info(f"❌ Erro ao acessar API: {response.status_code}")
+    except Exception as e:
+        logger.info(f"⚠️ Erro ao fazer requisição: {e}")
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global stop_process
@@ -47,17 +73,20 @@ async def websocket_endpoint(websocket: WebSocket):
         password = data["password"]
 
         await websocket.send_text("Iniciando autenticação...")
+        logger.info("Iniciando autenticação...")
         driver = await authenticate(username, password, websocket)
         if not driver:
             return
         
         if validateHomePageUrlElement(driver):
             await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
+            logger.info("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
 
         total_adicionados = await add_users_to_close_friends(driver, websocket)
         driver.quit()
 
         await websocket.send_text(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
+        logger.info(f"Processo concluído! {total_adicionados} usuários adicionados ao Close Friends.")
     except Exception as e:
         await websocket.send_text(f"Erro: {str(e)}")
     finally:
@@ -76,6 +105,7 @@ async def check_two_factor_auth(driver, websocket):
             
             if setTwoFactorMessage == False:
                 await websocket.send_text("Digite o código de dois fatores.")
+                logger.info("Digite o código de dois fatores.")
                 setTwoFactorMessage = True
 
             code = await websocket.receive_text()  # Aguarda o código do usuário
@@ -87,14 +117,17 @@ async def check_two_factor_auth(driver, websocket):
             
             if "two_factor" not in driver.current_url:
                 await websocket.send_text("Autenticação de dois fatores concluída com sucesso.")
+                logger.info("Autenticação de dois fatores concluída com sucesso.")
                 return True
             
             if len(driver.find_elements(By.ID, "twoFactorErrorAlert")):
                 await websocket.send_text("Código incorreto, tente novamente.")
+                logger.info("Código incorreto, tente novamente.")
                 return await check_two_factor_auth(driver, websocket)
 
     except Exception as e:
         await websocket.send_text(f"Erro na autenticação de dois fatores: {str(e)}")
+        logger.error(f"Erro na autenticação de dois fatores: {str(e)}")
     return False
 
 def check_invalid_password(driver):
@@ -130,6 +163,7 @@ async def authenticate(username: str, password: str, websocket: WebSocket):
 
         if check_invalid_password(driver):
             await websocket.send_text("Senha incorreta, encerrando o processo.")
+            logger.info("Senha incorreta, encerrando o processo.")
             driver.quit()
             return None
         
@@ -163,6 +197,7 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
         for icon in icons:
             if stop_process:
                 await websocket.send_text("Processo interrompido pelo usuário.")
+                logger.info("Processo interrompido pelo usuário.")
                 return total_adicionados
 
             if 'circle__outline' in icon.get_attribute('style'):
@@ -173,9 +208,11 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
                     add_button.click()
                     total_adicionados += 1
                     await websocket.send_text(f"{total_adicionados} usuários adicionados...")
+                    logger.info(f"{total_adicionados} usuários adicionados...")
                     await asyncio.sleep(3)  
                 except Exception as e:
                     await websocket.send_text(f"Erro ao clicar: {str(e)}")
+                    logger.error(f"Erro ao clicar: {str(e)}")
 
         driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
         await asyncio.sleep(2)  
@@ -193,6 +230,7 @@ async def add_users_to_close_friends(driver, websocket: WebSocket):
 
         if scroll_attempts == 0 and len(driver.find_elements(By.XPATH, "//div[@data-bloks-name='ig.components.Icon']")) == current_followers:
             await websocket.send_text(f"Todos os usuários foram adicionados com sucesso.")
+            logger.info(f"Todos os usuários foram adicionados com sucesso.")
             break
 
         last_height = new_height
