@@ -8,3 +8,4 @@ pathlib
 webdriver-manager
 webdriver-manager
 undetected-chromedriver
+gunicorn
