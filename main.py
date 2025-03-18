@@ -57,6 +57,8 @@ async def websocket_endpoint(websocket: WebSocket):
         if not driver:
             return
         
+        await asyncio.sleep(5)
+
         if validateHomePageUrlElement(driver):
             await websocket.send_text("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
             print("Autenticação bem-sucedida! Adicionando usuários ao Close Friends...")
