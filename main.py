@@ -101,7 +101,7 @@ async def check_two_factor_auth(driver, websocket):
                 print("Autenticação de dois fatores concluída com sucesso.")
                 return True
             
-            if len(driver.find_elements(By.ID, "twoFactorErrorAlert")):
+            if len(driver.find_elements(By.XPATH, "//div[contains(@class, 'x1f6kntn')]")):
                 await websocket.send_text("Código incorreto, tente novamente.")
                 print("Código incorreto, tente novamente.")
                 return await check_two_factor_auth(driver, websocket)
