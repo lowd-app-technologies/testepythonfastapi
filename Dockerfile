@@ -35,6 +35,8 @@ RUN wget -q https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriv
     mv chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver
 
+RUN apt-get update && apt-get install -y google-chrome-stable
+    
 # Define o diretório de trabalho
 WORKDIR /app
 
