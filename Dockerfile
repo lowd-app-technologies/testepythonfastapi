@@ -30,12 +30,10 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
 
 
 # Instala o ChromeDriver
-RUN wget -q https://chromedriver.storage.googleapis.com/133.0.6943.98/chromedriver_linux64.zip && \
+RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/134.0.6998.88/linux64/chromedriver-linux64.zip && \
     unzip chromedriver_linux64.zip && \
     mv chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver
-
-RUN apt-get update && apt-get install -y google-chrome-stable
     
 # Define o diretório de trabalho
 WORKDIR /app
