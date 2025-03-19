@@ -93,6 +93,7 @@ async def check_two_factor_auth(driver, websocket):
             
             code_input = driver.find_element(By.NAME, "verificationCode")
             code_input.send_keys(code)
+            print(code)
             code_input.send_keys(Keys.RETURN)
             time.sleep(7)
             
@@ -100,11 +101,6 @@ async def check_two_factor_auth(driver, websocket):
                 await websocket.send_text("Autenticação de dois fatores concluída com sucesso.")
                 print("Autenticação de dois fatores concluída com sucesso.")
                 return True
-            
-            if len(driver.find_elements(By.XPATH, "//div[contains(@class, 'x1f6kntn')]")):
-                await websocket.send_text("Código incorreto, tente novamente.")
-                print("Código incorreto, tente novamente.")
-                return await check_two_factor_auth(driver, websocket)
 
     except Exception as e:
         await websocket.send_text(f"Erro na autenticação de dois fatores: {str(e)}")
