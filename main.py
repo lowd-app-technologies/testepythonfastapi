@@ -90,13 +90,12 @@ async def check_two_factor_auth(driver, websocket):
                 setTwoFactorMessage = True
 
             code = await websocket.receive_text()  # Aguarda o código do usuário
-            
+            print(code)
             print(f"URL antes de digitar o código: {driver.current_url}")
             code_input = driver.find_element(By.NAME, "verificationCode")
             code_input.send_keys(code)
             code_input.send_keys(Keys.RETURN)
             time.sleep(10)
-            print(code)
             print(f"URL depois de digitar o código: {driver.current_url}")
             
             if "two_factor" not in driver.current_url:
