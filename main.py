@@ -12,7 +12,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://close-friends-nine.vercel.app/"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,7 +105,7 @@ async def check_two_factor_auth(driver, websocket):
                 print("Autenticação de dois fatores concluída com sucesso.")
                 return True
             
-            if len(driver.find_elements(By.XPATH, "//div[contains(@class, 'x1f6kntn')]")):
+            if len(driver.find_elements(By.XPATH, "//div[contains(@class, 'x540dpk')]")):
                 await websocket.send_text("Código incorreto, tente novamente.")
                 print("Código incorreto, tente novamente.")
                 return await check_two_factor_auth(driver, websocket)
