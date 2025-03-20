@@ -9,3 +9,5 @@ webdriver-manager
 webdriver-manager
 undetected-chromedriver
 gunicorn
+celery
+os
